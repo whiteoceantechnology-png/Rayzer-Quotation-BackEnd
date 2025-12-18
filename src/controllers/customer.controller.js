@@ -1,6 +1,6 @@
 import HTTPStatus from 'http-status';
 import Joi from 'joi';
-
+import { Op } from 'sequelize';
 import Customer from '../models/customer.model.js';
 import logger from '../utils/logger.js';
 
@@ -53,54 +53,50 @@ export async function list(req, res, next) {
     requestLogger.debug({ query: req.query }, 'Listing customers');
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.max(parseInt(req.query.limit, 10) || 20, 1);
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
     // Build query
-    const query = {};
-    if (req.user && req.user.user_id) {
-      query.created_by = req.user.user_id;
+    const where = {};
+    if (req.user && req.user.id) {
+      where.created_by = req.user.id;
     }
 
     // Search functionality
     if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, 'i');
-      query.$or = [
-        { name: searchRegex },
-        // { mobile_number: searchRegex },
-        { company_name: searchRegex },
-        // { location: searchRegex },
+      const searchPattern = `%${req.query.search}%`;
+      where[Op.or] = [
+        { name: { [Op.like]: searchPattern } },
+        { company_name: { [Op.like]: searchPattern } },
       ];
     }
 
-    // Individual field filters (optional)
+    // Individual field filters
     if (req.query.name) {
-      query.name = new RegExp(req.query.name, 'i');
+      where.name = { [Op.like]: `%${req.query.name}%` };
     }
     if (req.query.mobile_number) {
-      query.mobile_number = new RegExp(req.query.mobile_number, 'i');
+      where.mobile_number = { [Op.like]: `%${req.query.mobile_number}%` };
     }
     if (req.query.company_name) {
-      query.company_name = new RegExp(req.query.company_name, 'i');
+      where.company_name = { [Op.like]: `%${req.query.company_name}%` };
     }
     if (req.query.location) {
-      query.location = new RegExp(req.query.location, 'i');
+      where.location = { [Op.like]: `%${req.query.location}%` };
     }
 
-    const [items, total] = await Promise.all([
-      Customer.find(query)
-        .sort('-created_at')
-        .skip(skip)
-        .limit(limit)
-        .select('name mobile_number company_name location user_id created_at updated_at')
-        .exec(),
-      Customer.countDocuments(query).exec(),
-    ]);
+    const { count, rows: items } = await Customer.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      offset,
+      limit,
+      attributes: ['id', 'name', 'mobile_number', 'company_name', 'location', 'created_by', 'created_at', 'updated_at']
+    });
 
     return res.status(HTTPStatus.OK).json({
       message: 'Customers fetched',
       status: 1,
       data: items,
-      meta: { page, limit, total },
+      meta: { page, limit, total: count },
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'List customers error');
@@ -110,7 +106,7 @@ export async function list(req, res, next) {
 }
 
 /**
- * Get single customer by numeric user_id
+ * Get single customer by id
  */
 export async function getById(req, res, next) {
   try {
@@ -119,10 +115,13 @@ export async function getById(req, res, next) {
       return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'Invalid id', status: 0 });
     }
 
-    const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
+    const where = { id };
+    // Security: Only allow creator to view? Original code restricted it.
+    if (req.user && req.user.id) {
+      where.created_by = req.user.id;
+    }
 
-    const customer = await Customer.findOne(query).exec();
+    const customer = await Customer.findOne({ where });
     if (!customer) {
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
     }
@@ -149,15 +148,23 @@ export async function update(req, res, next) {
       if (req.body[f] !== undefined) updates[f] = req.body[f];
     });
 
-    const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
+    const where = { id };
+    if (req.user && req.user.id) {
+      where.created_by = req.user.id;
+    }
 
-    const updated = await Customer.findOneAndUpdate(query, updates, { new: true, runValidators: true }).exec();
-    if (!updated) {
+    const [updatedCount] = await Customer.update(updates, { where });
+
+    if (updatedCount === 0) {
+      // Check if it exists but not owned, or doesn't exist?
+      // For simplicity just 404
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found or not owned by you', status: 0 });
     }
 
-    return res.status(HTTPStatus.OK).json({ message: 'Customer updated', status: 1, data: updated });
+    // Fetch updated
+    const updatedCustomer = await Customer.findByPk(id);
+
+    return res.status(HTTPStatus.OK).json({ message: 'Customer updated', status: 1, data: updatedCustomer });
   } catch (e) {
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
@@ -174,11 +181,14 @@ export async function remove(req, res, next) {
       return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'Invalid id', status: 0 });
     }
 
-    const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
+    const where = { id };
+    if (req.user && req.user.id) {
+      where.created_by = req.user.id;
+    }
 
-    const result = await Customer.deleteOne(query).exec();
-    if (!result.deletedCount) {
+    const deletedCount = await Customer.destroy({ where });
+
+    if (deletedCount === 0) {
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found or not owned by you', status: 0 });
     }
 

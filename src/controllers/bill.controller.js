@@ -2,33 +2,34 @@ import HTTPStatus from 'http-status';
 import Joi from 'joi';
 import path from 'path';
 import fs from 'fs';
-import Bill from '../models/bill.model.js';
+import { Op } from 'sequelize';
+import Bill, { BillItem } from '../models/bill.model.js';
 import Customer from '../models/customer.model.js';
 import Product from '../models/product.model.js';
 import { generateBillPDF } from '../services/pdfGenerator.js';
 import logger from '../utils/logger.js';
-import { Mongoose } from 'mongoose';
 
 export const validation = {
   create: {
     body: {
-      customer_id: Joi.string().required(),
+      customer_id: Joi.number().required(), // Sequelize IDs are numbers
       items: Joi.array().min(1).items(
         Joi.object({
-          product_id: Joi.string().required(),
+          product_id: Joi.number().required(),
           quantity: Joi.number().min(1).required(),
+          room_name: Joi.string().optional().allow('', null)
         }),
       ).required(),
       discount: Joi.number().min(0).optional(),
-      notes: Joi.string().optional(),
-      terms_conditions: Joi.string().optional(),
+      notes: Joi.string().optional().allow('', null),
+      terms_conditions: Joi.string().optional().allow('', null),
     },
   },
 };
 
 export async function create(req, res, next) {
   try {
-    const customer = await Customer.findById(req.body.customer_id);
+    const customer = await Customer.findByPk(req.body.customer_id);
     if (!customer) {
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
     }
@@ -37,18 +38,29 @@ export async function create(req, res, next) {
     const items = [];
     let subtotal = 0;
 
+    // Optimize: Fetch all products in one go
+    const productIds = req.body.items.map(i => i.product_id);
+    const products = await Product.findAll({
+      where: {
+        id: { [Op.in]: productIds }
+      }
+    });
+
+    // Create Map for quick lookup
+    const productMap = new Map();
+    products.forEach(p => productMap.set(p.id, p));
+
     for (const item of req.body.items) {
-      const product = await Product.findById(item.product_id);
+      // Sequelize ID is integer, ensure type match (req body might be string if not validated strictly)
+      const product = productMap.get(Number(item.product_id));
       if (!product) continue;
 
       const totalPrice = product.mrp * item.quantity;
       subtotal += totalPrice;
 
       items.push({
-        product_id: product._id,
-        product_name: product.product,
+        product_id: product.id,
         room_name: item.room_name || 'N/A',
-        description: `${product.color} - ${product.chipset}`,
         quantity: item.quantity,
         unit_price: product.mrp,
         total_price: totalPrice,
@@ -61,8 +73,7 @@ export async function create(req, res, next) {
     const totalAmount = subtotal + taxAmount - discount;
 
     const bill = await Bill.create({
-      customer_id: customer._id,
-      items,
+      customer_id: customer.id,
       subtotal,
       tax_rate: taxRate,
       tax_amount: taxAmount,
@@ -70,11 +81,15 @@ export async function create(req, res, next) {
       total_amount: totalAmount,
       notes: req.body.notes,
       terms_conditions: req.body.terms_conditions,
-      created_by: req.user._id,
+      created_by: req.user.id,
+      items: items // Nested creation
+    }, {
+      include: [{ model: BillItem, as: 'items' }]
     });
-    return res.status(HTTPStatus.CREATED).json({ 
-      message: 'Bill created', 
-      status: 1, 
+
+    return res.status(HTTPStatus.CREATED).json({
+      message: 'Bill created',
+      status: 1,
       data: bill
     });
   } catch (e) {
@@ -88,41 +103,66 @@ export async function list(req, res, next) {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.max(parseInt(req.query.limit, 10) || 20, 1);
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
-    const query = { created_by: req.user._id };
-    if (req.query.status) query.status = req.query.status;
-    if (req.query.customer_id) query.customer_id = req.query.customer_id;
+    const where = { created_by: req.user.id };
+    if (req.query.status) where.status = req.query.status;
+    if (req.query.customer_id) where.customer_id = req.query.customer_id;
 
-    let [bills, total] = await Promise.all([
-      Bill.find(query)
-        .sort('-created_at')
-        .skip(skip)
-        .limit(limit)
-        .populate('customer_id', 'name mobile_number company_name location')
-        .populate('items.product_id', 'product color chipset')
-        .allowDiskUse().exec(),
-      Bill.countDocuments(query),
-    ]);
+    const { count, rows: bills } = await Bill.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      offset,
+      limit,
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['name', 'mobile_number', 'company_name', 'location']
+        },
+        {
+          model: BillItem,
+          as: 'items',
+          include: [{
+            model: Product,
+            as: 'product',
+            attributes: ['product', 'color', 'chipset']
+          }]
+        }
+      ],
+      distinct: true // Important for correct count with includes
+    });
 
-    bills=bills.map(bill => {
-        bill = bill.toObject();
-        bill.customer_details = bill.customer_id;
-        delete bill.customer_id;
-        bill.items = bill.items.map(item => {
-          if (item.product_id) {
-            item.product_name = item.product_id.product;
-            delete item.product_id;
+    const transformedBills = bills.map(bill => {
+      const b = bill.toJSON();
+
+      // Transform keys to match old API if frontend expects 'customer_details'
+      b.customer_details = b.customer;
+      delete b.customer;
+      delete b.customer_id; // Sequelize keeps FK field usually
+
+      if (b.items) {
+        b.items = b.items.map(item => {
+          if (item.product) {
+            item.product_name = item.product.product;
+            // Original code deleted product_id (which was the object in Mongoose populate).
+            // Here item.product is the object. item.product_id is likely the FK integer.
+            // We can mimic the structure:
+            // Old structure: items: [{ product_id: { product: '...'}, ... }] -> mapped to have product_name
+            // We have: items: [{ product: { product: '...' }, product_id: 1, ... }]
+            delete item.product;
           }
           return item;
         });
-        return bill;
-      });
-    return res.status(HTTPStatus.OK).json({ 
-      message: 'Bills fetched', 
-      status: 1, 
-      data: bills,
-      meta: { page, limit, total } 
+      }
+      return b;
+    });
+
+    return res.status(HTTPStatus.OK).json({
+      message: 'Bills fetched',
+      status: 1,
+      data: transformedBills,
+      meta: { page, limit, total: count }
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'List bills error');
@@ -133,35 +173,54 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    const billDetail = await Bill.findOne({ 
-      _id: req.params.id, 
-      created_by: req.user._id 
-    })
-    .populate('customer_id', 'name mobile_number company_name location')
-    .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
-    .exec();
+    const bill = await Bill.findOne({
+      where: {
+        id: req.params.id,
+        created_by: req.user.id
+      },
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['name', 'mobile_number', 'company_name', 'location']
+        },
+        {
+          model: BillItem,
+          as: 'items',
+          include: [{
+            model: Product,
+            as: 'product',
+            attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
+          }]
+        }
+      ]
+    });
 
-    if (!billDetail) {
-      return res.status(HTTPStatus.NOT_FOUND).json({ 
-        message: 'Bill not found', 
-        status: 0 
+    if (!bill) {
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
       });
     }
 
-    const data = billDetail.toObject();
-    data.customer_details = data.customer_id;
-    delete data.customer_id;  
-    data.items = data.items.map(item => {
-      if (item.product_id) {
-        item.product_details = item.product_id
-        item.display_details = `${item.product_id.color} - ${item.product_id.chipset} - ${item.product_id.ct} - ${item.product_id.cri} - ${item.product_id.drive} - ${item.product_id.power_factor} - ${item.product_id.drive_details} - ${item.product_id.warranty} - DLP: ${item.product_id.dlp} - MRP: ${item.product_id.mrp}`;
-        delete item.product_id;
-      }
-      return item;
-    });
-    return res.status(HTTPStatus.OK).json({ 
-      message: 'Bill fetched', 
-      status: 1, 
+    const data = bill.toJSON();
+    data.customer_details = data.customer;
+    delete data.customer;
+
+    if (data.items) {
+      data.items = data.items.map(item => {
+        if (item.product) {
+          item.product_details = item.product;
+          item.display_details = `${item.product.color} - ${item.product.chipset} - ${item.product.ct} - ${item.product.cri} - ${item.product.drive} - ${item.product.power_factor} - ${item.product.drive_details} - ${item.product.warranty} - DLP: ${item.product.dlp} - MRP: ${item.product.mrp}`;
+          delete item.product;
+        }
+        return item;
+      });
+    }
+
+    return res.status(HTTPStatus.OK).json({
+      message: 'Bill fetched',
+      status: 1,
       data
     });
   } catch (e) {
@@ -173,35 +232,52 @@ export async function getById(req, res, next) {
 
 export async function generatePDF(req, res, next) {
   try {
-    const bill = await Bill.findOne({ 
-      _id: req.params.id, 
-      created_by: req.user._id 
-    })
-    .populate('customer_id', 'name mobile_number company_name location')
-    .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
-    .exec();
-    
+    const bill = await Bill.findOne({
+      where: {
+        id: req.params.id,
+        created_by: req.user.id
+      },
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['name', 'mobile_number', 'company_name', 'location']
+        },
+        {
+          model: BillItem,
+          as: 'items',
+          include: [{
+            model: Product,
+            as: 'product',
+            attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
+          }]
+        }
+      ]
+    });
+
     if (!bill) {
-      return res.status(HTTPStatus.NOT_FOUND).json({ 
-        message: 'Bill not found', 
-        status: 0 
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
       });
     }
 
-    // Convert to plain object for PDF generation
-    const billData = bill.toObject();
+    const billData = bill.toJSON();
+    // Transform needed for PDF generator? Assuming generator expects same structure as getById result
+    // The original code passed `bill.toObject()` directly to generator, then saved to file.
+    // The generator might rely on `customer_id` being the customer object (due to populate).
+    // In Sequelize `toJSON` puts customer in `customer` key.
+    // We should map it to what generator expects.
+    billData.customer_id = billData.customer; // Alias for compatibility with PDF generator if it uses customer_id property
 
-    // // Group items by room_name for PDF sections
-    // const grouped = {};
-    // (billData.items || []).forEach(item => {
-    //   const room = item.room_name || 'Other';
-    //   if (!grouped[room]) grouped[room] = [];
-    //   grouped[room].push(item);
-    // });
-    // billData.sections = Object.entries(grouped).map(([room, items]) => ({
-    //   name: room,
-    //   items
-    // }));
+    // Map items to include product details embedded if needed
+    // Original Mongoose populate put product in `item.product_id`.
+    // Generator likely checks `item.product_id.field`.
+    billData.items.forEach(item => {
+      if (item.product) {
+        item.product_id = item.product; // Alias for compatibility
+      }
+    });
 
     const uploadsDir = path.join(process.cwd(), 'uploads', 'bills');
     if (!fs.existsSync(uploadsDir)) {
@@ -210,7 +286,6 @@ export async function generatePDF(req, res, next) {
 
     const filename = `${billData.bill_number}.pdf`;
     const filepath = path.join(uploadsDir, filename);
-    console.log('Generating PDF at:', billData);
     await generateBillPDF(billData, filepath);
 
     return res.download(filepath, filename, err => {

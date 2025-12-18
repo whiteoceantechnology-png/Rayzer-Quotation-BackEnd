@@ -20,7 +20,7 @@ const localLogin = new LocalStrategy(
   localOpts,
   async (mobile_number, password, done) => {
     try {
-      const user = await User.findOne({ mobile_number }).exec();
+      const user = await User.findOne({ where: { mobile_number } });
 
       if (!user) {
         logger.debug({ mobileNumber: mobile_number }, 'Local authentication failed: user not found');
@@ -56,7 +56,7 @@ const jwtOpts = {
 
 const jwtLogin = new JWTStrategy(jwtOpts, async (payload, done) => {
   try {
-    const user = await User.findById(payload.id);
+    const user = await User.findByPk(payload.id);
 
     if (!user) {
       logger.debug({ userId: payload.id }, 'JWT authentication failed: user not found');

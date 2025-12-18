@@ -54,9 +54,9 @@ export async function login(req, res, next) {
     const requestLogger = req.log || logger;
     requestLogger.info({ userId: req.user?.id }, 'User authenticated');
 
-    const respObj= {
+    const respObj = {
       message: 'Login successful',
-      status:1,
+      status: 1,
       data: req.user,
     }
     return res.status(HTTPStatus.OK).json(respObj);
@@ -71,10 +71,12 @@ export async function getProfile(req, res, next) {
   try {
     const requestLogger = req.log || logger;
     requestLogger.debug({ userId: req.user?.id }, 'Fetching profile');
-    const userProfile = await User.findById(req.user.id).select('-password -_id');
-    const respObj= {
+    const userProfile = await User.findByPk(req.user.id, {
+      attributes: { exclude: ['password'] } // Sequelize uses attributes: { exclude: ... }
+    });
+    const respObj = {
       message: 'Login successful',
-      status:1,
+      status: 1,
       data: userProfile,
     }
     return res.status(HTTPStatus.OK).json(respObj);

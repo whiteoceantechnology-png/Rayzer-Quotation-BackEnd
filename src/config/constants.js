@@ -5,17 +5,17 @@ const WHITELIST = {};
 
 const devConfig = {
   JWT_SECRET: process.env.JWT_SECRET_DEV,
-  MONGO_URL: process.env.MONGO_URL_DEV,
+  DB_URL: process.env.DB_URL_DEV || 'mariadb://root:root@localhost:3306/rayzer_quotation_dev',
 };
 
 const testConfig = {
   JWT_SECRET: 'ewtijwebgiuweg9w98u9283982t!!u1h28h1t1h89u9h@$$',
-  MONGO_URL: 'mongodb://localhost/nodejs-api-boilerplate-test',
+  DB_URL: 'mariadb://root:root@localhost:3306/rayzer_quotation_test',
 };
 
 const prodConfig = {
   JWT_SECRET: process.env.JWT_SECRET_PROD,
-  MONGO_URL: process.env.MONGO_URL_PROD,
+  DB_URL: process.env.DB_URL_PROD,
 };
 
 const defaultConfig = {

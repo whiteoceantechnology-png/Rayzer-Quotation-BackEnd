@@ -4,7 +4,7 @@
 import express from 'express';
 
 import './services/auth.js';
-import './config/database.js';
+import sequelize from './config/database.js';
 import middlewaresConfig from './config/middlewares.js';
 import constants from './config/constants.js';
 import ApiRoutes from './routes/index.js';
@@ -20,10 +20,17 @@ middlewaresConfig(app);
 app.use(transformResponseMiddleware);
 app.use('/api', ApiRoutes);
 
-const server = app.listen(constants.PORT, err => {
+const server = app.listen(constants.PORT, async err => {
   if (err) {
     logger.error({ err }, 'Cannot start server');
     return;
+  }
+
+  try {
+    await sequelize.sync();
+    logger.info('MariaDB synced');
+  } catch (dbErr) {
+    logger.error({ err: dbErr }, 'MariaDB sync error');
   }
 
   logger.info(

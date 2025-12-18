@@ -3,8 +3,6 @@
  */
 
 import HTTPStatus from 'http-status';
-
-import User from '../models/user.model.js';
 import { userSeed, deleteUserSeed } from '../seeds/user.seed.js';
 
 export async function seedUsers(req, res, next) {
@@ -33,15 +31,11 @@ export async function clearSeedUsers(req, res, next) {
 
 /**
  * Take all your model and clear it
- *
- * @param {any} req
- * @param {any} res
- * @param {any} next
- * @returns {String} All collections clear
  */
 export async function clearAll(req, res, next) {
   try {
-    await Promise.all([User.remove(), Post.remove()]);
+    await deleteUserSeed();
+    // Add other clears if needed
 
     return res.status(HTTPStatus.OK).send('All collections clear');
   } catch (e) {
