@@ -13,7 +13,6 @@ import {
   getCRI,
   getDrivers,
   getFinalProduct,
-  getById,
   createProduct,
   updateProduct,
   listAll
