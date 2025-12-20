@@ -46,14 +46,128 @@ const upload = multer({
 const router = new Router();
 
 // List and search with pagination (must be before selection routes)
+/**
+ * @swagger
+ * tags:
+ *   name: Products
+ *   description: Product Management
+ */
+
+/**
+ * @swagger
+ * /products:
+ *   get:
+ *     summary: List products
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: product
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of products
+ */
 router.get('/', authJwt, list);
 
 // Upload route
+/**
+ * @swagger
+ * /products/upload:
+ *   post:
+ *     summary: Upload Product Excel
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Products uploaded
+ */
 router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), upload.single('file'), uploadExcel);
+
+/**
+ * @swagger
+ * /products:
+ *   post:
+ *     summary: Create Product
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               product:
+ *                 type: string
+ *               color:
+ *                 type: string
+ *               chipset:
+ *                 type: string
+ *               mrp:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Product created
+ */
 router.post('/', authJwt, checkRole([ROLES.ADMIN]), createProduct);
 
 // Cascading selection routes (specific routes before parameterized routes)
+/**
+ * @swagger
+ * /products/selection:
+ *   get:
+ *     summary: Get unique products (Step 1)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Unique product names
+ */
 router.get('/selection', authJwt, getProducts);
+
+/**
+ * @swagger
+ * /products/selection/types:
+ *   get:
+ *     summary: Get types (Step 2)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: product
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Types
+ */
 router.get('/selection/types', authJwt, getTypes);
 router.get('/selection/beamangles', authJwt, getBeamAngles);
 router.get('/selection/colors', authJwt, getColors);
@@ -61,9 +175,79 @@ router.get('/selection/chipsets', authJwt, getChipsets);
 router.get('/selection/ct', authJwt, getColorTemperatures);
 router.get('/selection/cri', authJwt, getCRI);
 router.get('/selection/drivers', authJwt, getDrivers);
+
+/**
+ * @swagger
+ * /products/selection/final:
+ *   get:
+ *     summary: Get final product based on selection
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: product
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: color
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: chipset
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: ct
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: cri
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: drive
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: beam_angle
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Final product details
+ */
 router.get('/selection/final', authJwt, getFinalProduct);
 
 // Get by ID (must be last to avoid conflicts with /selection routes)
+/**
+ * @swagger
+ * /products/{id}:
+ *   get:
+ *     summary: Get product by ID
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Product details
+ */
 router.get('/:id', authJwt, getById);
 
 export default router;

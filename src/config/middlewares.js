@@ -13,6 +13,7 @@ import pinoHttp from 'pino-http';
 import { randomUUID } from 'crypto';
 
 import logger from '../utils/logger.js';
+import rateLimit from 'express-rate-limit';
 
 const isTest = process.env.NODE_ENV === 'test';
 const isDev = process.env.NODE_ENV === 'development';
@@ -58,5 +59,18 @@ export default app => {
   if (isDev && !isTest) {
     app.use(expressStatusMonitor());
   }
+
+  // Rate Limiting
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests, please try again later.',
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  });
+
+  // Apply to all requests
+  app.use(limiter);
+
   app.use(methodOverride());
 };

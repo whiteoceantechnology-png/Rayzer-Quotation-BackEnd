@@ -1,7 +1,17 @@
 import HTTPStatus from 'http-status';
 import mongoose from 'mongoose';
 import Product from '../models/product.model.js';
+
 import logger from '../utils/logger.js';
+import CacheService from '../services/cache.js';
+import crypto from 'crypto';
+
+const CACHE_TTL = 3600; // 1 hour
+
+const generateCacheKey = (prefix, data) => {
+  const hash = crypto.createHash('md5').update(JSON.stringify(data || {})).digest('hex');
+  return `${prefix}:${hash}`;
+};
 
 function buildQuery(q) {
   const query = {};
@@ -175,6 +185,8 @@ export async function getById(req, res, next) {
   }
 }
 
+
+
 /**
  * Step 1: Get unique products with wattage (with pagination)
  * GET /api/products/selection?page=1&limit=20
@@ -186,6 +198,16 @@ export async function getProducts(req, res, next) {
     const skip = (page - 1) * limit;
     const { type } = req.query;
 
+    const cacheKey = generateCacheKey('products:selection:list', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({
+        ...cachedData,
+        message: 'Products fetched (cached)'
+      });
+    }
+
     // Get all unique products
     const allProducts = await Product.distinct('product', { type }).exec();
     const sortedProducts = allProducts.filter(Boolean).sort();
@@ -194,18 +216,24 @@ export async function getProducts(req, res, next) {
     const total = sortedProducts.length;
     const paginatedProducts = sortedProducts.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Products fetched',
       data: paginatedProducts,
       meta: { page, limit, total },
-    });
+    };
+
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get products error');
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
   }
 }
+
+
 
 /**
  * Step 2: Get types for selected product (with pagination)
@@ -218,12 +246,15 @@ export async function getTypes(req, res, next) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
 
-    // if (!product) {
-    //   return res.status(HTTPStatus.BAD_REQUEST).json({
-    //     status: 0,
-    //     message: 'Product parameter is required',
-    //   });
-    // }
+    const cacheKey = generateCacheKey('products:selection:types', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({
+        ...cachedData,
+        message: 'Types fetched (cached)'
+      });
+    }
 
     const allTypes = await Product.distinct('type').exec();
     const sortedTypes = allTypes.filter(Boolean).sort();
@@ -232,12 +263,16 @@ export async function getTypes(req, res, next) {
     const total = sortedTypes.length;
     const paginatedTypes = sortedTypes.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Types fetched',
       data: paginatedTypes,
       meta: { page, limit, total },
-    });
+    };
+
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get types error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -266,6 +301,12 @@ export async function getBeamAngles(req, res, next) {
     const query = { product };
     if (type) query.type = type;
 
+    const cacheKey = generateCacheKey('products:selection:beamangles', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Beam angles fetched (cached)' });
+    }
+
     const beamAngles = await Product.distinct('beam_angle', query).exec();
 
     // Sort numerically
@@ -283,12 +324,15 @@ export async function getBeamAngles(req, res, next) {
     const total = sortedAngles.length;
     const paginatedAngles = sortedAngles.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Beam angles fetched',
       data: paginatedAngles,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get beam angles error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -318,6 +362,12 @@ export async function getColors(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
 
+    const cacheKey = generateCacheKey('products:selection:colors', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Colors fetched (cached)' });
+    }
+
     const allColors = await Product.distinct('color', query).exec();
     const sortedColors = allColors.filter(Boolean).sort();
 
@@ -325,12 +375,15 @@ export async function getColors(req, res, next) {
     const total = sortedColors.length;
     const paginatedColors = sortedColors.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Colors fetched',
       data: paginatedColors,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get colors error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -360,6 +413,12 @@ export async function getChipsets(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
 
+    const cacheKey = generateCacheKey('products:selection:chipsets', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Chipsets fetched (cached)' });
+    }
+
     const allChipsets = await Product.distinct('chipset', query).exec();
     const sortedChipsets = allChipsets.filter(Boolean).sort();
 
@@ -367,12 +426,15 @@ export async function getChipsets(req, res, next) {
     const total = sortedChipsets.length;
     const paginatedChipsets = sortedChipsets.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Chipsets fetched',
       data: paginatedChipsets,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get chipsets error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -402,6 +464,12 @@ export async function getColorTemperatures(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
 
+    const cacheKey = generateCacheKey('products:selection:ct', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Color temperatures fetched (cached)' });
+    }
+
     const cts = await Product.distinct('ct', query).exec();
 
     // Sort numerically
@@ -414,12 +482,15 @@ export async function getColorTemperatures(req, res, next) {
     const total = sortedCts.length;
     const paginatedCts = sortedCts.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Color temperatures fetched',
       data: paginatedCts,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get color temperatures error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -450,6 +521,12 @@ export async function getCRI(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
 
+    const cacheKey = generateCacheKey('products:selection:cri', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'CRI values fetched (cached)' });
+    }
+
     requestLogger.debug({ query }, 'Fetching CRI values');
     const cris = await Product.distinct('cri', query).exec();
     requestLogger.debug({ count: cris.length }, 'CRI values fetched');
@@ -468,12 +545,15 @@ export async function getCRI(req, res, next) {
     const total = sortedCris.length;
     const paginatedCris = sortedCris.slice(skip, skip + limit);
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'CRI values fetched',
       data: paginatedCris,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get CRI error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -504,6 +584,12 @@ export async function getDrivers(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
     requestLogger.debug({ query }, 'Fetching drivers');
+    const cacheKey = generateCacheKey('products:selection:drivers', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Drivers fetched (cached)' });
+    }
+
     const drivers = await Product.find(
       query,
       { drive: 1, power_factor: 1, drive_details: 1, warranty: 1 }
@@ -533,12 +619,15 @@ export async function getDrivers(req, res, next) {
 
     requestLogger.debug({ total }, 'Drivers fetched');
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Drivers fetched',
       data: paginatedDrivers,
       meta: { page, limit, total },
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get drivers error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -564,6 +653,12 @@ export async function getFinalProduct(req, res, next) {
     const query = { product, color, chipset, ct, cri, drive };
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
+
+    const cacheKey = generateCacheKey('products:selection:final', req.query);
+    const cachedData = await CacheService.get(cacheKey);
+    if (cachedData) {
+      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Final product fetched (cached)' });
+    }
 
     const finalProduct = await Product.findOne(query).lean().exec();
 
@@ -605,11 +700,14 @@ export async function getFinalProduct(req, res, next) {
       displayName: displayParts.join(' - '),
     };
 
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Final product fetched',
       data: transformedProduct,
-    });
+    };
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get final product error');
     e.status = HTTPStatus.BAD_REQUEST;
