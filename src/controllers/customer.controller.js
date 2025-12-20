@@ -3,6 +3,9 @@ import Joi from 'joi';
 
 import Customer from '../models/customer.model.js';
 import logger from '../utils/logger.js';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 export const validation = {
   create: {
@@ -57,7 +60,7 @@ export async function list(req, res, next) {
 
     // Build query
     const query = {};
-    if (req.user && req.user.user_id) {
+    if (req.user && req.user.user_id && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
       query.created_by = req.user.user_id;
     }
 
@@ -120,7 +123,7 @@ export async function getById(req, res, next) {
     }
 
     const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
+    if (req.user && req.user.user_id && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user.user_id;
 
     const customer = await Customer.findOne(query).exec();
     if (!customer) {
@@ -139,18 +142,15 @@ export async function getById(req, res, next) {
  */
 export async function update(req, res, next) {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) {
-      return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'Invalid id', status: 0 });
-    }
+    const _id = req.params.id;
 
     const updates = {};
     ['name', 'mobile_number', 'company_name', 'location'].forEach((f) => {
       if (req.body[f] !== undefined) updates[f] = req.body[f];
     });
 
-    const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
+    const query = { _id };
+    if (req.user && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user.user_id;
 
     const updated = await Customer.findOneAndUpdate(query, updates, { new: true, runValidators: true }).exec();
     if (!updated) {
@@ -165,18 +165,14 @@ export async function update(req, res, next) {
 }
 
 /**
- * Delete customer (only creator can delete)
+ * Delete customer (only creator/admin/manager can delete)
  */
 export async function remove(req, res, next) {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) {
-      return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'Invalid id', status: 0 });
-    }
+    const _id = req.params.id;
 
-    const query = { user_id: id };
-    if (req.user && req.user.user_id) query.created_by = req.user.user_id;
-
+    const query = { _id };
+    if (req.user && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user._id;
     const result = await Customer.deleteOne(query).exec();
     if (!result.deletedCount) {
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found or not owned by you', status: 0 });

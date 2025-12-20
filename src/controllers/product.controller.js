@@ -34,8 +34,39 @@ function buildQuery(q) {
       { warranty: rx },
     ];
   }
-  
+
   return query;
+}
+
+export async function createProduct(req, res, next) {
+  try {
+    const { product, color, chipset, ct, cri, drive, type, beam_angle, power_factor, drive_details, warranty, dlp, mrp, id } = req.body;
+    const savedProduct = await Product.create({
+      product,
+      color,
+      chipset,
+      ct,
+      cri,
+      drive,
+      type,
+      beam_angle,
+      power_factor,
+      drive_details,
+      warranty,
+      dlp,
+      mrp,
+      id
+    });
+    return res.status(HTTPStatus.CREATED).json({
+      message: 'Product created',
+      status: 1,
+      data: savedProduct,
+    });
+  } catch (e) {
+    (req.log || logger).error({ err: e }, 'Create product error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
 }
 
 export async function list(req, res, next) {
@@ -129,7 +160,7 @@ export async function getById(req, res, next) {
         created_at: 1,
         updated_at: 1,
       })
-      
+
       .exec();
 
     if (!product) {
@@ -156,13 +187,13 @@ export async function getProducts(req, res, next) {
     const { type } = req.query;
 
     // Get all unique products
-    const allProducts = await Product.distinct('product', {type}).exec();
+    const allProducts = await Product.distinct('product', { type }).exec();
     const sortedProducts = allProducts.filter(Boolean).sort();
-    
+
     // Apply pagination
     const total = sortedProducts.length;
     const paginatedProducts = sortedProducts.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Products fetched',
@@ -186,7 +217,7 @@ export async function getTypes(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     // if (!product) {
     //   return res.status(HTTPStatus.BAD_REQUEST).json({
     //     status: 0,
@@ -196,7 +227,7 @@ export async function getTypes(req, res, next) {
 
     const allTypes = await Product.distinct('type').exec();
     const sortedTypes = allTypes.filter(Boolean).sort();
-    
+
     // Apply pagination
     const total = sortedTypes.length;
     const paginatedTypes = sortedTypes.slice(skip, skip + limit);
@@ -224,7 +255,7 @@ export async function getBeamAngles(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     if (!product) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -236,7 +267,7 @@ export async function getBeamAngles(req, res, next) {
     if (type) query.type = type;
 
     const beamAngles = await Product.distinct('beam_angle', query).exec();
-    
+
     // Sort numerically
     const sortedAngles = beamAngles
       .filter(Boolean)
@@ -247,11 +278,11 @@ export async function getBeamAngles(req, res, next) {
       .filter(angle => angle !== null)
       .sort((a, b) => a - b)
       .map(angle => angle.toString());
-    
+
     // Apply pagination
     const total = sortedAngles.length;
     const paginatedAngles = sortedAngles.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Beam angles fetched',
@@ -275,7 +306,7 @@ export async function getColors(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     if (!product) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -289,11 +320,11 @@ export async function getColors(req, res, next) {
 
     const allColors = await Product.distinct('color', query).exec();
     const sortedColors = allColors.filter(Boolean).sort();
-    
+
     // Apply pagination
     const total = sortedColors.length;
     const paginatedColors = sortedColors.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Colors fetched',
@@ -331,11 +362,11 @@ export async function getChipsets(req, res, next) {
 
     const allChipsets = await Product.distinct('chipset', query).exec();
     const sortedChipsets = allChipsets.filter(Boolean).sort();
-    
+
     // Apply pagination
     const total = sortedChipsets.length;
     const paginatedChipsets = sortedChipsets.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Chipsets fetched',
@@ -359,7 +390,7 @@ export async function getColorTemperatures(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     if (!product || !color || !chipset) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -372,17 +403,17 @@ export async function getColorTemperatures(req, res, next) {
     if (beam_angle) query.beam_angle = beam_angle;
 
     const cts = await Product.distinct('ct', query).exec();
-    
+
     // Sort numerically
     const sortedCts = cts
       .filter(Boolean)
       .sort((a, b) => a - b)
       .map(ct => ct.toString());
-    
+
     // Apply pagination
     const total = sortedCts.length;
     const paginatedCts = sortedCts.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Color temperatures fetched',
@@ -407,7 +438,7 @@ export async function getCRI(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     if (!product || !color || !chipset /* || !ct */) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -419,9 +450,9 @@ export async function getCRI(req, res, next) {
     if (type) query.type = type;
     if (beam_angle) query.beam_angle = beam_angle;
 
-  requestLogger.debug({ query }, 'Fetching CRI values');
-  const cris = await Product.distinct('cri', query).exec();
-  requestLogger.debug({ count: cris.length }, 'CRI values fetched');
+    requestLogger.debug({ query }, 'Fetching CRI values');
+    const cris = await Product.distinct('cri', query).exec();
+    requestLogger.debug({ count: cris.length }, 'CRI values fetched');
     // Sort numerically
     const sortedCris = cris
       .filter(Boolean)
@@ -432,11 +463,11 @@ export async function getCRI(req, res, next) {
       .filter(cri => cri !== null)
       // .sort((a, b) => a - b)
       .map(cri => cri.toString());
-    
+
     // Apply pagination
     const total = sortedCris.length;
     const paginatedCris = sortedCris.slice(skip, skip + limit);
-    
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'CRI values fetched',
@@ -461,7 +492,7 @@ export async function getDrivers(req, res, next) {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
-    
+
     if (!product || !color || !chipset || !ct || !cri) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -522,7 +553,7 @@ export async function getDrivers(req, res, next) {
 export async function getFinalProduct(req, res, next) {
   try {
     let { product, type, beam_angle, color, chipset, ct, cri, drive } = req.query;
-    
+
     if (!product || !color || !chipset || !ct || !cri || !drive) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,

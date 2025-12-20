@@ -8,6 +8,10 @@ import validate from 'express-validation';
 import * as UserController from '../controllers/user.controller.js';
 import * as AuthenticationController from '../controllers/authentication.controller.js';
 import { authLocal, authJwt } from '../services/auth.js';
+import { checkRole } from '../middlewares/rbac.middleware.js';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 const routes = new Router();
 
@@ -39,6 +43,44 @@ routes.patch(
   // validate(AuthenticationController.validation.login),
   authJwt,
   UserController.updateProfile,
+);
+
+
+
+// Sales Person Management Routes (Admin Only)
+routes.post(
+  '/sales-persons',
+  authJwt,
+  checkRole([ROLES.ADMIN]),
+  UserController.createSalesPerson
+);
+
+routes.get(
+  '/sales-persons',
+  authJwt,
+  checkRole([ROLES.ADMIN]),
+  UserController.listSalesPersons
+);
+
+routes.get(
+  '/sales-persons/:id',
+  authJwt,
+  checkRole([ROLES.ADMIN]),
+  UserController.getSalesPerson
+);
+
+routes.patch(
+  '/sales-persons/:id',
+  authJwt,
+  checkRole([ROLES.ADMIN]),
+  UserController.updateSalesPerson
+);
+
+routes.delete(
+  '/sales-persons/:id',
+  authJwt,
+  checkRole([ROLES.ADMIN]),
+  UserController.deleteSalesPerson
 );
 
 export default routes;

@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { authJwt } from '../services/auth.js';
-import { 
-  list, 
-  getById, 
+import {
+  list,
+  getById,
   getProducts,
   getTypes,
   getBeamAngles,
@@ -12,13 +12,18 @@ import {
   getColorTemperatures,
   getCRI,
   getDrivers,
-  getFinalProduct
+  getFinalProduct,
+  createProduct
 } from '../controllers/product.controller.js';
 import { uploadExcel } from '../controllers/productUpload.controller.js';
+import { checkRole } from '../middlewares/rbac.middleware.js';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 // Configure multer for file upload
-const upload = multer({ 
-  storage: multer.memoryStorage(), 
+const upload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = [
@@ -26,10 +31,10 @@ const upload = multer({
       'application/vnd.ms-excel',
       'application/octet-stream'
     ];
-    
+
     const allowedExtensions = ['.xlsx', '.xls'];
     const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
-    
+
     if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
       cb(null, true);
     } else {
@@ -44,7 +49,8 @@ const router = new Router();
 router.get('/', authJwt, list);
 
 // Upload route
-router.post('/upload', authJwt, upload.single('file'), uploadExcel);
+router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), upload.single('file'), uploadExcel);
+router.post('/', authJwt, checkRole([ROLES.ADMIN]), createProduct);
 
 // Cascading selection routes (specific routes before parameterized routes)
 router.get('/selection', authJwt, getProducts);

@@ -8,6 +8,9 @@ import Product from '../models/product.model.js';
 import { generateBillPDF } from '../services/pdfGenerator.js';
 import logger from '../utils/logger.js';
 import { Mongoose } from 'mongoose';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 export const validation = {
   create: {
@@ -72,9 +75,9 @@ export async function create(req, res, next) {
       terms_conditions: req.body.terms_conditions,
       created_by: req.user._id,
     });
-    return res.status(HTTPStatus.CREATED).json({ 
-      message: 'Bill created', 
-      status: 1, 
+    return res.status(HTTPStatus.CREATED).json({
+      message: 'Bill created',
+      status: 1,
       data: bill
     });
   } catch (e) {
@@ -90,7 +93,10 @@ export async function list(req, res, next) {
     const limit = Math.max(parseInt(req.query.limit, 10) || 20, 1);
     const skip = (page - 1) * limit;
 
-    const query = { created_by: req.user._id };
+    const query = {};
+    if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
+      query.created_by = req.user._id;
+    }
     if (req.query.status) query.status = req.query.status;
     if (req.query.customer_id) query.customer_id = req.query.customer_id;
 
@@ -105,24 +111,24 @@ export async function list(req, res, next) {
       Bill.countDocuments(query),
     ]);
 
-    bills=bills.map(bill => {
-        bill = bill.toObject();
-        bill.customer_details = bill.customer_id;
-        delete bill.customer_id;
-        bill.items = bill.items.map(item => {
-          if (item.product_id) {
-            item.product_name = item.product_id.product;
-            delete item.product_id;
-          }
-          return item;
-        });
-        return bill;
+    bills = bills.map(bill => {
+      bill = bill.toObject();
+      bill.customer_details = bill.customer_id;
+      delete bill.customer_id;
+      bill.items = bill.items.map(item => {
+        if (item.product_id) {
+          item.product_name = item.product_id.product;
+          delete item.product_id;
+        }
+        return item;
       });
-    return res.status(HTTPStatus.OK).json({ 
-      message: 'Bills fetched', 
-      status: 1, 
+      return bill;
+    });
+    return res.status(HTTPStatus.OK).json({
+      message: 'Bills fetched',
+      status: 1,
       data: bills,
-      meta: { page, limit, total } 
+      meta: { page, limit, total }
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'List bills error');
@@ -133,24 +139,26 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    const billDetail = await Bill.findOne({ 
-      _id: req.params.id, 
-      created_by: req.user._id 
-    })
-    .populate('customer_id', 'name mobile_number company_name location')
-    .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
-    .exec();
+    const query = { _id: req.params.id };
+    if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
+      query.created_by = req.user._id;
+    }
+
+    const billDetail = await Bill.findOne(query)
+      .populate('customer_id', 'name mobile_number company_name location')
+      .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
+      .exec();
 
     if (!billDetail) {
-      return res.status(HTTPStatus.NOT_FOUND).json({ 
-        message: 'Bill not found', 
-        status: 0 
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
       });
     }
 
     const data = billDetail.toObject();
     data.customer_details = data.customer_id;
-    delete data.customer_id;  
+    delete data.customer_id;
     data.items = data.items.map(item => {
       if (item.product_id) {
         item.product_details = item.product_id
@@ -159,9 +167,9 @@ export async function getById(req, res, next) {
       }
       return item;
     });
-    return res.status(HTTPStatus.OK).json({ 
-      message: 'Bill fetched', 
-      status: 1, 
+    return res.status(HTTPStatus.OK).json({
+      message: 'Bill fetched',
+      status: 1,
       data
     });
   } catch (e) {
@@ -173,18 +181,20 @@ export async function getById(req, res, next) {
 
 export async function generatePDF(req, res, next) {
   try {
-    const bill = await Bill.findOne({ 
-      _id: req.params.id, 
-      created_by: req.user._id 
-    })
-    .populate('customer_id', 'name mobile_number company_name location')
-    .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
-    .exec();
-    
+    const query = { _id: req.params.id };
+    if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
+      query.created_by = req.user._id;
+    }
+
+    const bill = await Bill.findOne(query)
+      .populate('customer_id', 'name mobile_number company_name location')
+      .populate('items.product_id', 'product color chipset ct cri drive power_factor drive_details warranty dlp mrp image')
+      .exec();
+
     if (!bill) {
-      return res.status(HTTPStatus.NOT_FOUND).json({ 
-        message: 'Bill not found', 
-        status: 0 
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
       });
     }
 

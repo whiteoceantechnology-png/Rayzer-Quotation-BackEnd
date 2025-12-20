@@ -7,6 +7,8 @@ import uniqueValidator from 'mongoose-unique-validator';
 
 import constants from '../config/constants.js';
 
+const { ROLES } = constants;
+
 const UserSchema = new Schema(
   {
     email: {
@@ -28,7 +30,7 @@ const UserSchema = new Schema(
     },
     first_name: {
       type: String,
-      trim: true,     
+      trim: true,
     },
     last_name: {
       type: String,
@@ -38,6 +40,11 @@ const UserSchema = new Schema(
       type: String,
       trim: true,
       unique: true,
+    },
+    role: {
+      type: String,
+      enum: Object.values(ROLES),
+      default: ROLES.SALES_PERSON,
     },
     password: {
       type: String,
@@ -63,7 +70,7 @@ UserSchema.plugin(uniqueValidator, {
 });
 
 // Hash the user password and assign user_id on creation
-UserSchema.pre('save', async function(next) {
+UserSchema.pre('save', async function (next) {
   if (this.isModified('password')) {
     this.password = this._hashPassword(this.password);
   }
@@ -106,7 +113,7 @@ UserSchema.methods = {
   createToken() {
     return jwt.sign(
       {
-        id: this._id,        
+        id: this._id,
       },
       constants.JWT_SECRET,
     );
@@ -127,6 +134,7 @@ UserSchema.methods = {
       first_name: this.first_name,
       last_name: this.last_name,
       mobile_number: this.mobile_number,
+      role: this.role,
     };
   },
 
@@ -144,6 +152,7 @@ UserSchema.methods = {
       first_name: this.first_name,
       last_name: this.last_name,
       mobile_number: this.mobile_number,
+      role: this.role,
       created_at: this.created_at,
       updated_at: this.updated_at
     };
@@ -151,7 +160,7 @@ UserSchema.methods = {
 };
 
 
-  const User = mongoose.model('User', UserSchema);
+const User = mongoose.model('User', UserSchema);
 
 
 export default User;

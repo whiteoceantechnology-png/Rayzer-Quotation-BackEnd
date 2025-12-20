@@ -3,6 +3,10 @@ import validate from 'express-validation';
 
 import * as CustomerController from '../controllers/customer.controller.js';
 import { authJwt } from '../services/auth.js';
+import { checkRole } from '../middlewares/rbac.middleware.js';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 const router = new Router();
 
@@ -35,6 +39,7 @@ router.put(
 router.delete(
   '/:id',
   authJwt,
+  checkRole([ROLES.ADMIN, ROLES.MANAGER, ROLES.SALES_PERSON]),
   CustomerController.remove,
 );
 
