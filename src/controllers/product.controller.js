@@ -79,6 +79,40 @@ export async function createProduct(req, res, next) {
   }
 }
 
+export async function updateProduct(req, res, next) {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(HTTPStatus.BAD_REQUEST).json({ status: 0, message: 'Invalid product id' });
+    }
+
+    const updates = { ...req.body };
+    delete updates.id;
+    delete updates._id;
+    delete updates.created_at;
+    delete updates.updated_at;
+
+    const product = await Product.findByIdAndUpdate(id, updates, { new: true });
+
+    if (!product) {
+      return res.status(HTTPStatus.NOT_FOUND).json({ status: 0, message: 'Product not found' });
+    }
+
+    // Invalidate cache as product data changed
+    CacheService.clear();
+
+    return res.status(HTTPStatus.OK).json({
+      status: 1,
+      message: 'Product updated',
+      data: product,
+    });
+  } catch (e) {
+    (req.log || logger).error({ err: e }, 'Update product error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}
+
 export async function list(req, res, next) {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -107,10 +141,12 @@ export async function list(req, res, next) {
           dlp: 1,
           mrp: 1,
           created_at: 1,
-        }).exec(),
+        })
+        .exec(),
       Product.countDocuments(query).exec(),
     ]);
-    items = items.map(item => {
+
+    items = items.map((item) => {
       const plain = item.toObject();
       const displayName = [
         plain.product,
@@ -129,7 +165,7 @@ export async function list(req, res, next) {
 
     (req.log || logger).debug(
       { page, limit, total, returned: items.length },
-      'Products list retrieved',
+      'Products list retrieved'
     );
 
     return res.status(HTTPStatus.OK).json({
@@ -144,6 +180,41 @@ export async function list(req, res, next) {
     return next(e);
   }
 }
+
+export async function listAll(req, res, next) {
+  try {
+    const products = await Product.find({})
+      .sort({ created_at: -1 })
+      .select({
+        product: 1,
+        color: 1,
+        chipset: 1,
+        type: 1,
+        beam_angle: 1,
+        ct: 1,
+        cri: 1,
+        drive: 1,
+        power_factor: 1,
+        drive_details: 1,
+        warranty: 1,
+        dlp: 1,
+        mrp: 1,
+        created_at: 1,
+      })
+      .exec();
+
+    return res.status(HTTPStatus.OK).json({
+      status: 1,
+      message: 'All products fetched',
+      data: products,
+    });
+  } catch (e) {
+    (req.log || logger).error({ err: e }, 'List all products error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}
+
 
 export async function getById(req, res, next) {
   try {

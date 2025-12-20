@@ -13,7 +13,10 @@ import {
   getCRI,
   getDrivers,
   getFinalProduct,
-  createProduct
+  getById,
+  createProduct,
+  updateProduct,
+  listAll
 } from '../controllers/product.controller.js';
 import { uploadExcel } from '../controllers/productUpload.controller.js';
 import { checkRole } from '../middlewares/rbac.middleware.js';
@@ -83,6 +86,20 @@ const router = new Router();
  *         description: List of products
  */
 router.get('/', authJwt, list);
+
+/**
+ * @swagger
+ * /products/all:
+ *   get:
+ *     summary: List all products (Admin Only - No Pagination)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of all products
+ */
+router.get('/all', authJwt, checkRole([ROLES.ADMIN]), listAll);
 
 // Upload route
 /**
@@ -249,5 +266,51 @@ router.get('/selection/final', authJwt, getFinalProduct);
  *         description: Product details
  */
 router.get('/:id', authJwt, getById);
+
+/**
+ * @swagger
+ * /products/{id}:
+ *   patch:
+ *     summary: Update product (Admin Only)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               product:
+ *                 type: string
+ *               color:
+ *                 type: string
+ *               chipset:
+ *                 type: string
+ *               mrp:
+ *                 type: number
+ *               type:
+ *                 type: string
+ *               beam_angle:
+ *                 type: string
+ *               power_factor:
+ *                 type: string
+ *               drive_details:
+ *                 type: string
+ *               warranty:
+ *                 type: string
+ *               dlp:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Product updated
+ */
+router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), updateProduct);
 
 export default router;
