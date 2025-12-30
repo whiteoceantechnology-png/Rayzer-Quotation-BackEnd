@@ -4,6 +4,7 @@ import Joi from 'joi';
 import Customer from '../models/customer.model.js';
 import logger from '../utils/logger.js';
 import constants from '../config/constants.js';
+import sharp from 'sharp';
 
 const { ROLES } = constants;
 
@@ -31,12 +32,22 @@ export const validation = {
  */
 export async function create(req, res, next) {
   try {
+    let quotation_image = null;
+    if (req.file) {
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .toFormat('jpeg', { quality: 80 })
+        .toBuffer();
+      quotation_image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+    }
+
     const payload = {
       name: req.body.name,
       mobile_number: req.body.mobile_number,
       company_name: req.body.company_name,
       location: req.body.location,
-      created_by: req.user && req.user.id ? req.user.id : null,
+      created_by: req.user && (req.user.id || req.user._id) ? (req.user.id || req.user._id) : null,
+      quotation_image,
     };
 
     const customer = await Customer.create(payload);
@@ -60,8 +71,9 @@ export async function list(req, res, next) {
 
     // Build query
     const query = {};
-    if (req.user && req.user.user_id && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
-      query.created_by = req.user.user_id;
+    const userId = req.user?.id || req.user?._id;
+    if (userId && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
+      query.created_by = userId;
     }
 
     // Search functionality
@@ -123,7 +135,8 @@ export async function getById(req, res, next) {
     }
 
     const query = { user_id: id };
-    if (req.user && req.user.user_id && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user.user_id;
+    const userId = req.user?.id || req.user?._id;
+    if (userId && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = userId;
 
     const customer = await Customer.findOne(query).exec();
     if (!customer) {
@@ -143,14 +156,22 @@ export async function getById(req, res, next) {
 export async function update(req, res, next) {
   try {
     const _id = req.params.id;
-
     const updates = {};
+    if (req.file) {
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .toFormat('jpeg', { quality: 80 })
+        .toBuffer();
+      updates.quotation_image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+    }
+
     ['name', 'mobile_number', 'company_name', 'location'].forEach((f) => {
       if (req.body[f] !== undefined) updates[f] = req.body[f];
     });
 
     const query = { _id };
-    if (req.user && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user.user_id;
+    const userId = req.user?.id || req.user?._id;
+    if (userId && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = userId;
 
     const updated = await Customer.findOneAndUpdate(query, updates, { new: true, runValidators: true }).exec();
     if (!updated) {
@@ -172,7 +193,8 @@ export async function remove(req, res, next) {
     const _id = req.params.id;
 
     const query = { _id };
-    if (req.user && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = req.user._id;
+    const userId = req.user?.id || req.user?._id;
+    if (userId && req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) query.created_by = userId;
     const result = await Customer.deleteOne(query).exec();
     if (!result.deletedCount) {
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found or not owned by you', status: 0 });

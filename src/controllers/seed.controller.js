@@ -5,11 +5,11 @@
 import HTTPStatus from 'http-status';
 
 import User from '../models/user.model.js';
-import { userSeed, deleteUserSeed } from '../seeds/user.seed.js';
+// import { userSeed, deleteUserSeed } from '../seeds/user.seed.js';
 
 export async function seedUsers(req, res, next) {
   try {
-    await userSeed(req.params.count);
+    // await userSeed(req.params.count);
 
     return res
       .status(HTTPStatus.OK)
@@ -22,7 +22,7 @@ export async function seedUsers(req, res, next) {
 
 export async function clearSeedUsers(req, res, next) {
   try {
-    await deleteUserSeed();
+    // await deleteUserSeed();
 
     return res.status(HTTPStatus.OK).send('User collection empty');
   } catch (e) {
@@ -41,7 +41,7 @@ export async function clearSeedUsers(req, res, next) {
  */
 export async function clearAll(req, res, next) {
   try {
-    await Promise.all([User.remove(), Post.remove()]);
+    await Promise.all([User.remove()]);
 
     return res.status(HTTPStatus.OK).send('All collections clear');
   } catch (e) {

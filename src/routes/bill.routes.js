@@ -26,23 +26,30 @@ const router = new Router();
  *           schema:
  *             type: object
  *             required:
- *               - customer
- *               - products
+ *               - customer_id
+ *               - items
  *             properties:
- *               customer:
+ *               customer_id:
  *                 type: string
  *                 description: Customer ID
- *               products:
+ *               items:
  *                 type: array
  *                 items:
  *                   type: object
+ *                   required: [product_id, quantity]
  *                   properties:
- *                     product:
+ *                     product_id:
  *                       type: string
  *                     quantity:
  *                       type: integer
- *                     price:
- *                       type: number
+ *                     room_name:
+ *                       type: string
+ *               discount:
+ *                 type: number
+ *               notes:
+ *                 type: string
+ *               terms_conditions:
+ *                 type: string
  *     responses:
  *       201:
  *         description: Bill created
@@ -65,6 +72,28 @@ router.post('/', authJwt, BillController.create);
  *         name: limit
  *         schema:
  *           type: integer
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by date (YYYY-MM-DD)
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [draft, sent, paid, cancelled]
+ *         description: Filter by status
+ *       - in: query
+ *         name: customer_id
+ *         schema:
+ *           type: string
+ *         description: Filter by Customer ID
+ *       - in: query
+ *         name: sales_staff_id
+ *         schema:
+ *           type: string
+ *         description: Filter by Sales Staff (User) ID
  *     responses:
  *       200:
  *         description: List of bills

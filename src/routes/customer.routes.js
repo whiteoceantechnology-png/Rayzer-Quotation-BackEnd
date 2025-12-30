@@ -5,7 +5,7 @@ import * as CustomerController from '../controllers/customer.controller.js';
 import { authJwt } from '../services/auth.js';
 import { checkRole } from '../middlewares/rbac.middleware.js';
 import constants from '../config/constants.js';
-
+import { uploadImage } from '../utils/multer.js';
 const { ROLES } = constants;
 
 const router = new Router();
@@ -28,7 +28,7 @@ const router = new Router();
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required:
@@ -43,6 +43,9 @@ const router = new Router();
  *                 type: string
  *               location:
  *                 type: string
+ *               quotation_image:
+ *                 type: string
+ *                 format: binary
  *     responses:
  *       201:
  *         description: Customer created
@@ -53,6 +56,7 @@ router.post(
   '/',
   // validate(CustomerController.validation.create),
   authJwt,
+  uploadImage.single('quotation_image'),
   CustomerController.create,
 );
 
@@ -125,7 +129,7 @@ router.get(
  *           type: string
  *     requestBody:
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
@@ -137,6 +141,9 @@ router.get(
  *                 type: string
  *               location:
  *                 type: string
+ *               quotation_image:
+ *                 type: string
+ *                 format: binary
  *     responses:
  *       200:
  *         description: Customer updated
@@ -145,6 +152,7 @@ router.put(
   '/:id',
   // validate(CustomerController.validation.update),
   authJwt,
+  uploadImage.single('quotation_image'),
   CustomerController.update,
 );
 

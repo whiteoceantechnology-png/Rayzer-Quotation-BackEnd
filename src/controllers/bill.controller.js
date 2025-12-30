@@ -94,11 +94,30 @@ export async function list(req, res, next) {
     const skip = (page - 1) * limit;
 
     const query = {};
+
+    // Security logic: SALESPERSON can only see their own bills
     if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.MANAGER) {
       query.created_by = req.user._id;
+    } else if (req.query.sales_staff_id) {
+      // ADMIN/MANAGER can filter by sales staff
+      query.created_by = req.query.sales_staff_id;
     }
+
     if (req.query.status) query.status = req.query.status;
     if (req.query.customer_id) query.customer_id = req.query.customer_id;
+
+    if (req.query.date) {
+      const startOfDay = new Date(req.query.date);
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date(req.query.date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      query.created_at = {
+        $gte: startOfDay,
+        $lte: endOfDay
+      };
+    }
 
     let [bills, total] = await Promise.all([
       Bill.find(query)

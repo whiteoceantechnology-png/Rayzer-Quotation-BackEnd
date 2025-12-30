@@ -5,6 +5,7 @@ import Product from '../models/product.model.js';
 import logger from '../utils/logger.js';
 import CacheService from '../services/cache.js';
 import crypto from 'crypto';
+import sharp from 'sharp';
 
 const CACHE_TTL = 3600; // 1 hour
 
@@ -51,6 +52,16 @@ function buildQuery(q) {
 export async function createProduct(req, res, next) {
   try {
     const { product, color, chipset, ct, cri, drive, type, beam_angle, power_factor, drive_details, warranty, dlp, mrp, id } = req.body;
+
+    let base64Image = '';
+    if (req.file) {
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .toFormat('jpeg', { quality: 80 })
+        .toBuffer();
+      base64Image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+    }
+
     const savedProduct = await Product.create({
       product,
       color,
@@ -65,7 +76,8 @@ export async function createProduct(req, res, next) {
       warranty,
       dlp,
       mrp,
-      id
+      id,
+      image: base64Image
     });
     return res.status(HTTPStatus.CREATED).json({
       message: 'Product created',
@@ -91,6 +103,14 @@ export async function updateProduct(req, res, next) {
     delete updates._id;
     delete updates.created_at;
     delete updates.updated_at;
+
+    if (req.file) {
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .toFormat('jpeg', { quality: 80 })
+        .toBuffer();
+      updates.image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+    }
 
     const product = await Product.findByIdAndUpdate(id, updates, { new: true });
 
@@ -140,6 +160,7 @@ export async function list(req, res, next) {
           warranty: 1,
           dlp: 1,
           mrp: 1,
+          image: 1,
           created_at: 1,
         })
         .exec(),
@@ -238,6 +259,7 @@ export async function getById(req, res, next) {
         warranty: 1,
         dlp: 1,
         mrp: 1,
+        image: 1,
         created_at: 1,
         updated_at: 1,
       })

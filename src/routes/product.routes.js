@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import multer from 'multer';
+import { uploadExcelFile, uploadImage } from '../utils/multer.js';
 import { authJwt } from '../services/auth.js';
 import {
   list,
@@ -22,28 +22,6 @@ import { checkRole } from '../middlewares/rbac.middleware.js';
 import constants from '../config/constants.js';
 
 const { ROLES } = constants;
-
-// Configure multer for file upload
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-      'application/octet-stream'
-    ];
-
-    const allowedExtensions = ['.xlsx', '.xls'];
-    const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
-
-    if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only Excel files (.xlsx, .xls) are allowed.'));
-    }
-  }
-});
 
 const router = new Router();
 
@@ -122,7 +100,7 @@ router.get('/all', authJwt, checkRole([ROLES.ADMIN]), listAll);
  *       200:
  *         description: Products uploaded
  */
-router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), upload.single('file'), uploadExcel);
+router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), uploadExcelFile.single('file'), uploadExcel);
 
 /**
  * @swagger
@@ -134,7 +112,7 @@ router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), upload.single('file'),
  *       - bearerAuth: []
  *     requestBody:
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
@@ -144,13 +122,34 @@ router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), upload.single('file'),
  *                 type: string
  *               chipset:
  *                 type: string
+ *               ct:
+ *                 type: string
+ *               cri:
+ *                 type: string
+ *               drive:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *               beam_angle:
+ *                 type: string
+ *               power_factor:
+ *                 type: string
+ *               drive_details:
+ *                 type: string
+ *               warranty:
+ *                 type: string
+ *               dlp:
+ *                 type: number
+ *               image:
+ *                 type: string
+ *                 format: binary
  *               mrp:
  *                 type: number
  *     responses:
  *       201:
  *         description: Product created
  */
-router.post('/', authJwt, checkRole([ROLES.ADMIN]), createProduct);
+router.post('/', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('image'), createProduct);
 
 // Cascading selection routes (specific routes before parameterized routes)
 /**
@@ -282,7 +281,7 @@ router.get('/:id', authJwt, getById);
  *           type: string
  *     requestBody:
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             properties:
@@ -306,10 +305,13 @@ router.get('/:id', authJwt, getById);
  *                 type: string
  *               dlp:
  *                 type: string
+ *               image:
+ *                 type: string
+ *                 format: binary
  *     responses:
  *       200:
  *         description: Product updated
  */
-router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), updateProduct);
+router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('image'), updateProduct);
 
 export default router;

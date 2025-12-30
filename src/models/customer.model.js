@@ -24,7 +24,11 @@ const CustomerSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'Created by is required'],
-    }, 
+    },
+    quotation_image: {
+      type: String,
+      trim: true,
+    },
     created_at: Date,
     updated_at: Date,
   },
