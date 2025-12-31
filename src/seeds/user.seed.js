@@ -1,4 +1,4 @@
-import faker from 'faker';
+import { faker } from '@faker-js/faker';
 import User from '../models/user.model.js';
 import logger from '../utils/logger.js';
 

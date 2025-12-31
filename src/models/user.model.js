@@ -5,7 +5,7 @@ import { compareSync, hashSync } from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import constants from '../config/constants.js';
 import sequelize from '../config/database.js';
-
+const { ROLES } = constants;
 class User extends Model {
   /**
    * Authenticate the user
@@ -48,6 +48,7 @@ class User extends Model {
       first_name: this.first_name,
       last_name: this.last_name,
       mobile_number: this.mobile_number,
+      role: this.role,
     };
   }
 
@@ -65,8 +66,9 @@ class User extends Model {
       first_name: this.first_name,
       last_name: this.last_name,
       mobile_number: this.mobile_number,
-      created_at: this.createdAt,
-      updated_at: this.updatedAt
+      role: this.role || ROLES.SALES_PERSON,
+      created_at: this.created_at,
+      updated_at: this.updated_at
     };
   }
 
@@ -75,6 +77,17 @@ class User extends Model {
   }
 }
 
+// SUGGESTION: Ensure indexes on frequently queried fields for performance
+// Example:
+// User.init({
+//   ...fields...
+// }, {
+//   indexes: [
+//     { fields: ['email'], unique: true },
+//     { fields: ['username'], unique: true },
+//     { fields: ['role'] },
+//   ]
+// });
 User.init({
   email: {
     type: Sequelize.STRING,

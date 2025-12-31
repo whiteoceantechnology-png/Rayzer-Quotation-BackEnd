@@ -7,7 +7,7 @@ import { userSeed, deleteUserSeed } from '../seeds/user.seed.js';
 
 export async function seedUsers(req, res, next) {
   try {
-    await userSeed(req.params.count);
+    // await userSeed(req.params.count);
 
     return res
       .status(HTTPStatus.OK)
@@ -20,7 +20,7 @@ export async function seedUsers(req, res, next) {
 
 export async function clearSeedUsers(req, res, next) {
   try {
-    await deleteUserSeed();
+    // await deleteUserSeed();
 
     return res.status(HTTPStatus.OK).send('User collection empty');
   } catch (e) {

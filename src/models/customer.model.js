@@ -25,6 +25,10 @@ Customer.init({
   location: {
     type: Sequelize.STRING
   },
+  quotation_image: {
+    type: Sequelize.STRING,
+    allowNull: true,
+  },
   created_by: {
     type: Sequelize.INTEGER, // Assuming User.id is Integer (default in Sequelize). If UUID, change this.
     allowNull: false,

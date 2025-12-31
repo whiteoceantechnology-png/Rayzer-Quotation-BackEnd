@@ -8,6 +8,9 @@ import Customer from '../models/customer.model.js';
 import Product from '../models/product.model.js';
 import { generateBillPDF } from '../services/pdfGenerator.js';
 import logger from '../utils/logger.js';
+import constants from '../config/constants.js';
+
+const { ROLES } = constants;
 
 export const validation = {
   create: {

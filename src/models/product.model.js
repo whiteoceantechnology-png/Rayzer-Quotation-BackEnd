@@ -3,6 +3,7 @@ import sequelize from '../config/database.js';
 
 class Product extends Model { }
 
+// Indexes for performance: composite, fulltext, and single column indexes are defined below.
 Product.init({
   product: {
     type: Sequelize.STRING,

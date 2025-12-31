@@ -1,7 +1,13 @@
 // require('dotenv').config();
- import 'dotenv/config.js';
+import 'dotenv/config.js';
 
 const WHITELIST = {};
+
+const ROLES = {
+  ADMIN: 'ADMIN',
+  MANAGER: 'MANAGER',
+  SALES_PERSON: 'SALES_PERSON',
+};
 
 const devConfig = {
   JWT_SECRET: process.env.JWT_SECRET_DEV,
@@ -22,6 +28,7 @@ const defaultConfig = {
   PORT: process.env.PORT || 3000,
   RAVEN_ID: process.env.RAVEN_ID,
   WHITELIST,
+  ROLES,
 };
 
 function envConfig(env) {
