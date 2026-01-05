@@ -32,13 +32,18 @@ export const validation = {
  */
 export async function create(req, res, next) {
   try {
+    // console.log(req);
+    // console.log('Creating customer with request body:', req.file);
     let quotation_image = null;
     if (req.file) {
-      const optimizedBuffer = await sharp(req.file.buffer)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .toFormat('jpeg', { quality: 80 })
-        .toBuffer();
-      quotation_image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+      console.log('Processing uploaded file for quotation_image');
+      // const optimizedBuffer = await sharp(req.file.buffer)
+      //   .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+      //   .toFormat('jpeg', { quality: 80 })
+      //   .toBuffer();
+      // quotation_image = `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+      quotation_image = req.file.buffer.toString('base64');
+      console.log('Quotation image processed');
     }
 
     const payload = {
@@ -49,12 +54,13 @@ export async function create(req, res, next) {
       created_by: req.user && (req.user.id || req.user._id) ? (req.user.id || req.user._id) : null,
       quotation_image,
     };
-
+    // console.log('Creating customer with payload:', payload);
     const customer = await Customer.create(payload);
     return res.status(HTTPStatus.CREATED).json({ message: 'Customer created', status: 1, data: customer });
   } catch (e) {
+    // (req.log || logger).error({ err: e }, 'Create customer error');
     e.status = HTTPStatus.BAD_REQUEST;
-    return next(e);
+    return res.status(HTTPStatus.BAD_REQUEST).json({ message: e.message || 'Create customer error', status: 0 , err: e })  ;
   }
 }
 

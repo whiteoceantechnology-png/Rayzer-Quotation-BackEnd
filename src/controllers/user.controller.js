@@ -84,7 +84,16 @@ export async function createSalesPerson(req, res, next) {
   try {
     const { email, password, username, first_name, last_name, mobile_number } = req.body;
 
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    const { Op } = (await import('sequelize'));
+    const existingUser = await User.findOne({
+      where: {
+        [Op.or]: [
+          { email },
+          { username }
+        ]
+      }
+    });
+    console.log(existingUser);
     if (existingUser) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
@@ -115,6 +124,7 @@ export async function createSalesPerson(req, res, next) {
       data: salesPerson.toJSON(),
     });
   } catch (e) {
+    console.log(e);
     (req.log || logger).error({ err: e }, 'Create sales person error');
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
@@ -149,14 +159,27 @@ export async function listSalesPersons(req, res, next) {
       (req.log || logger).debug({ cacheKey }, 'Cache miss for sales persons list');
     }
 
+    // Build Sequelize where clause
+    const where = { role: ROLES.SALES_PERSON };
+    if (req.query.search) {
+      const { Op } = (await import('sequelize'));
+      where[Op.or] = [
+        { first_name: { [Op.iLike]: `%${req.query.search}%` } },
+        { last_name: { [Op.iLike]: `%${req.query.search}%` } },
+        { email: { [Op.iLike]: `%${req.query.search}%` } },
+        { username: { [Op.iLike]: `%${req.query.search}%` } },
+      ];
+    }
+
     const [salesPersons, total] = await Promise.all([
-      User.find(query)
-        .select('-password')
-        .sort({ created_at: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      User.countDocuments(query),
+      User.findAll({
+        where,
+        attributes: { exclude: ['password'] },
+        order: [['created_at', 'DESC']],
+        offset: skip,
+        limit,
+      }),
+      User.count({ where }),
     ]);
 
     const result = {

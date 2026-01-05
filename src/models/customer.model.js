@@ -26,7 +26,7 @@ Customer.init({
     type: Sequelize.STRING
   },
   quotation_image: {
-    type: Sequelize.STRING,
+    type: Sequelize.TEXT('medium'),
     allowNull: true,
   },
   created_by: {

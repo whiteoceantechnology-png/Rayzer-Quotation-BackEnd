@@ -6,8 +6,13 @@ import Sequelize from 'sequelize';
 import logger from '../utils/logger.js';
 import constants from './constants.js';
 
-const sequelize = new Sequelize(constants.DB_URL, {
+const sequelize = new Sequelize({
+  database: constants.DB_NAME,
+  username: constants.DB_USER,
+  password: constants.DB_PASSWORD,
+  host: constants.DB_HOST,
   dialect: 'mariadb',
+  sync: { alter: true },
   logging: (msg) => logger.debug(msg),
   define: {
     timestamps: true,

@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import constants from '../config/constants.js';
 import sequelize from '../config/database.js';
 const { ROLES } = constants;
+
 class User extends Model {
   /**
    * Authenticate the user
@@ -59,17 +60,9 @@ class User extends Model {
    * @returns {Object} User - ready for populate
    */
   toJSON() {
-    return {
-      id: this.id,
-      username: this.username,
-      email: this.email,
-      first_name: this.first_name,
-      last_name: this.last_name,
-      mobile_number: this.mobile_number,
-      role: this.role || ROLES.SALES_PERSON,
-      created_at: this.created_at,
-      updated_at: this.updated_at
-    };
+    const values = Object.assign({}, this.get());
+    delete values.password;
+    return values;
   }
 
   static _hashPassword(password) {
@@ -98,27 +91,30 @@ User.init({
     validate: {
       notEmpty: { msg: 'Email is required!' },
       isEmail: { msg: 'Email is not valid!' }
-    }
+    },
+    field: 'email'
   },
   mobile_number: {
     type: Sequelize.STRING,
-    validate: {
-      // trim is handled by setter if needed or input sanitization, 
-      // Sequelize doesn't have auto-trim in model definition like Mongoose, 
-      // but we can add a setter.
-    }
+    set(value) {
+      this.setDataValue('mobile_number', value ? value.trim() : value);
+    },
+    field: 'mobile_number'
   },
   first_name: {
     type: Sequelize.STRING,
+    field: 'first_name'
   },
   last_name: {
     type: Sequelize.STRING,
+    field: 'last_name'
   },
   username: {
     type: Sequelize.STRING,
     unique: {
       msg: 'Username already exists'
-    }
+    },
+    field: 'username'
   },
   password: {
     type: Sequelize.STRING,
@@ -133,12 +129,21 @@ User.init({
         args: /\d/,
         msg: 'Password must contain a number!'
       }
-    }
+    },
+    field: 'password'
+  },
+  role: {
+    type: Sequelize.ENUM,
+    values: Object.values(ROLES),
+    defaultValue: ROLES.SALES_PERSON,
+    field: 'role'
   }
 }, {
   sequelize,
   modelName: 'User',
   tableName: 'users',
+  underscored: true,
+  timestamps: true,
   hooks: {
     beforeCreate: (user) => {
       if (user.password) {
@@ -150,7 +155,12 @@ User.init({
         user.password = User._hashPassword(user.password);
       }
     }
-  }
+  },
+  indexes: [
+    { fields: ['email'], unique: true },
+    { fields: ['username'], unique: true },
+    { fields: ['role'] }
+  ]
 });
 
 // Sync model with database (optional, better to migrate properly in real prod, but for this task/dev ok)

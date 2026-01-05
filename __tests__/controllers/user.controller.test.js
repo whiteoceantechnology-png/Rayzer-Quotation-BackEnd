@@ -40,7 +40,8 @@ describe('User Controller', () => {
     it('should reset password and return success', async () => {
       const req = { body: { password: 'Password1' }, user: { id: 'userId' } };
       const res = mockRes();
-      sinon.stub(User, 'findByIdAndUpdate').resolves();
+      sinon.stub(User, 'update').resolves();
+      sinon.stub(User, 'findByPk').resolves();
       sinon.stub(require('bcrypt'), 'hash').resolves('hashed');
       await userController.resetPassword(req, res, () => {});
       expect(res.status.calledWith(200)).to.be.true;

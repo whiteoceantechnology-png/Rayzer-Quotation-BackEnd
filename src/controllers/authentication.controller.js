@@ -72,7 +72,7 @@ export async function getProfile(req, res, next) {
     const requestLogger = req.log || logger;
     requestLogger.debug({ userId: req.user?.id }, 'Fetching profile');
     const userProfile = await User.findByPk(req.user.id, {
-      attributes: { exclude: ['password'] } // Sequelize uses attributes: { exclude: ... }
+      attributes: { exclude: ['password'] }
     });
     const respObj = {
       message: 'Login successful',

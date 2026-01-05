@@ -22,6 +22,10 @@ const testConfig = {
 const prodConfig = {
   JWT_SECRET: process.env.JWT_SECRET_PROD,
   DB_URL: process.env.DB_URL_PROD,
+  DB_USER: process.env.DB_USERNAME,
+  DB_PASSWORD: process.env.DB_PASSWORD,
+  DB_NAME: process.env.DB_NAME,
+  DB_HOST: process.env.DB_HOST,
 };
 
 const defaultConfig = {
