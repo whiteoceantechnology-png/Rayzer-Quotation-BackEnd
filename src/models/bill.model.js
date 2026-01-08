@@ -71,28 +71,39 @@ BillItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 Bill.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
 Bill.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
 
-// Hook for bill_number
+// Hook for bill_number with transaction lock to prevent race condition
 Bill.beforeCreate(async (bill, options) => {
   if (!bill.bill_number) {
     const date = new Date();
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
+    const prefix = `INV-${year}${month}-`;
 
-    // Find last bill
+    // Use transaction if available, or create one for atomic sequence generation
+    const transaction = options.transaction;
+    
+    // Find last bill with matching prefix for this month to get sequence
+    // Use FOR UPDATE lock when in transaction to prevent race condition
     const lastBill = await Bill.findOne({
-      order: [['created_at', 'DESC']]
+      where: {
+        bill_number: {
+          [Sequelize.Op.like]: `${prefix}%`
+        }
+      },
+      order: [['bill_number', 'DESC']],
+      ...(transaction ? { transaction, lock: transaction.LOCK.UPDATE } : {})
     });
 
     let seq = 1;
     if (lastBill && lastBill.bill_number) {
       const parts = lastBill.bill_number.split('-');
-      const lastSeq = parseInt(parts.pop());
+      const lastSeq = parseInt(parts.pop(), 10);
       if (!isNaN(lastSeq)) {
         seq = lastSeq + 1;
       }
     }
 
-    bill.bill_number = `INV-${year}${month}-${String(seq).padStart(4, '0')}`;
+    bill.bill_number = `${prefix}${String(seq).padStart(4, '0')}`;
   }
 });
 

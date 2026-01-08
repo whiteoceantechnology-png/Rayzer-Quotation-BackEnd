@@ -262,7 +262,7 @@ export async function deleteSalesPerson(req, res, next) {
   try {
     const { id } = req.params;
 
-    const result = await User.findOneAndDelete({ _id: id, role: ROLES.SALES_PERSON });
+    const result = await User.destroy({ where: { id, role: ROLES.SALES_PERSON } });
 
     if (!result) {
       return res.status(HTTPStatus.NOT_FOUND).json({

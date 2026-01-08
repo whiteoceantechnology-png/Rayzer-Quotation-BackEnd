@@ -10,7 +10,11 @@ const options = {
         },
         servers: [
             {
-                url: 'http://localhost:3000/api',
+                url: 'https://server.rayzerlights.com/api',
+                description: 'Production server',
+            },
+            {
+                url: 'http://localhost:4000/api',
                 description: 'Development server',
             },
         ],

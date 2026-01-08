@@ -51,7 +51,7 @@ function buildQuery(q) {
 
 export async function createProduct(req, res, next) {
   try {
-    const { product, color, chipset, ct, cri, drive, type, beam_angle, power_factor, drive_details, warranty, dlp, mrp, id } = req.body;
+    const { product, color, chipset, ct, cri, drive, type, beam_angle, power_factor, drive_details, warranty, dlp, mrp } = req.body;
 
     let base64Image = '';
     if (req.file) {
@@ -76,7 +76,6 @@ export async function createProduct(req, res, next) {
       warranty,
       dlp,
       mrp,
-      id,
       image: base64Image
     });
     return res.status(HTTPStatus.CREATED).json({
@@ -93,8 +92,8 @@ export async function createProduct(req, res, next) {
 
 export async function updateProduct(req, res, next) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
       return res.status(HTTPStatus.BAD_REQUEST).json({ status: 0, message: 'Invalid product id' });
     }
 
@@ -130,6 +129,41 @@ export async function updateProduct(req, res, next) {
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Update product error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}
+
+export async function deleteProduct(req, res, next) {
+  try {
+    const { id } = req.params;
+    const requestLogger = req.log || logger;
+
+    // Check if product exists
+    const product = await Product.findByPk(id);
+    if (!product) {
+      return res.status(HTTPStatus.NOT_FOUND).json({ status: 0, message: 'Product not found' });
+    }
+
+    // Delete product
+    await product.destroy();
+
+    // Invalidate cache
+    try {
+      CacheService.clear();
+    } catch (cacheErr) {
+      requestLogger.warn({ err: cacheErr }, 'Failed to clear cache');
+    }
+
+    requestLogger.info({ productId: id }, 'Product deleted');
+
+    return res.status(HTTPStatus.OK).json({
+      status: 1,
+      message: 'Product deleted successfully',
+    });
+  } catch (e) {
+    console.error(e);
+    (req.log || logger).error({ err: e }, 'Delete product error');
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
   }

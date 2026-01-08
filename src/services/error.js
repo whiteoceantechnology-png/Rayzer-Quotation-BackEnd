@@ -51,9 +51,21 @@ export class RequiredError {
    * @returns {Object} - errors - Pretty Object transform
    */
   static makePretty(errors) {
+    if (!Array.isArray(errors) || errors.length === 0) {
+      return {};
+    }
     return errors.reduce((obj, error) => {
+      if (!error || typeof error !== 'object') {
+        return obj;
+      }
       const nObj = obj;
-      nObj[error.field] = error.messages[0].replace(/"/g, '');
+      // Support both Joi (field/messages) and Sequelize (path/message) error formats
+      const field = error.field || error.path || 'unknown';
+      const messages = error.messages;
+      const message = (Array.isArray(messages) && messages.length > 0 ? messages[0] : null) 
+        || error.message 
+        || 'Validation error';
+      nObj[field] = String(message).replace(/"/g, '');
       return nObj;
     }, {});
   }

@@ -15,6 +15,7 @@ import {
   getFinalProduct,
   createProduct,
   updateProduct,
+  deleteProduct,
   listAll
 } from '../controllers/product.controller.js';
 import { uploadExcel } from '../controllers/productUpload.controller.js';
@@ -149,7 +150,7 @@ router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), uploadExcelFile.single
  *       201:
  *         description: Product created
  */
-router.post('/', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('image'), createProduct);
+router.post('/', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('imageFile'), createProduct);
 
 // Cascading selection routes (specific routes before parameterized routes)
 /**
@@ -312,6 +313,28 @@ router.get('/:id', authJwt, getById);
  *       200:
  *         description: Product updated
  */
-router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('image'), updateProduct);
+router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('imageFile'), updateProduct);
+
+/**
+ * @swagger
+ * /products/{id}:
+ *   delete:
+ *     summary: Delete product (Admin Only)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Product deleted
+ *       404:
+ *         description: Product not found
+ */
+router.delete('/:id', authJwt, checkRole([ROLES.ADMIN]), deleteProduct);
 
 export default router;

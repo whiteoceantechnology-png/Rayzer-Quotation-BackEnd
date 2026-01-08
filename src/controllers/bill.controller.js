@@ -3,12 +3,14 @@ import Joi from 'joi';
 import path from 'path';
 import fs from 'fs';
 import { Op } from 'sequelize';
+import sequelize from '../config/database.js';
 import Bill, { BillItem } from '../models/bill.model.js';
 import Customer from '../models/customer.model.js';
 import Product from '../models/product.model.js';
 import { generateBillPDF } from '../services/pdfGenerator.js';
 import logger from '../utils/logger.js';
 import constants from '../config/constants.js';
+import User from '../models/user.model.js';
 
 const { ROLES } = constants;
 
@@ -31,9 +33,11 @@ export const validation = {
 };
 
 export async function create(req, res, next) {
+  const transaction = await sequelize.transaction();
   try {
-    const customer = await Customer.findByPk(req.body.customer_id);
+    const customer = await Customer.findByPk(req.body.customer_id, { transaction });
     if (!customer) {
+      await transaction.rollback();
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
     }
 
@@ -46,17 +50,22 @@ export async function create(req, res, next) {
     const products = await Product.findAll({
       where: {
         id: { [Op.in]: productIds }
-      }
+      },
+      transaction
     });
 
     // Create Map for quick lookup
     const productMap = new Map();
     products.forEach(p => productMap.set(p.id, p));
 
+    const invalidProductIds = [];
     for (const item of req.body.items) {
       // Sequelize ID is integer, ensure type match (req body might be string if not validated strictly)
       const product = productMap.get(Number(item.product_id));
-      if (!product) continue;
+      if (!product) {
+        invalidProductIds.push(item.product_id);
+        continue;
+      }
 
       const totalPrice = product.mrp * item.quantity;
       subtotal += totalPrice;
@@ -68,6 +77,21 @@ export async function create(req, res, next) {
         unit_price: product.mrp,
         total_price: totalPrice,
       });
+    }
+
+    // Check if any valid items exist
+    if (items.length === 0) {
+      await transaction.rollback();
+      return res.status(HTTPStatus.BAD_REQUEST).json({
+        message: 'No valid products found in items',
+        status: 0,
+        invalid_product_ids: invalidProductIds
+      });
+    }
+
+    // Warn about invalid products but continue
+    if (invalidProductIds.length > 0) {
+      (req.log || logger).warn({ invalidProductIds }, 'Some products not found while creating bill');
     }
 
     const taxRate = 18;
@@ -87,15 +111,20 @@ export async function create(req, res, next) {
       created_by: req.user.id,
       items: items // Nested creation
     }, {
-      include: [{ model: BillItem, as: 'items' }]
+      include: [{ model: BillItem, as: 'items' }],
+      transaction
     });
+
+    await transaction.commit();
 
     return res.status(HTTPStatus.CREATED).json({
       message: 'Bill created',
       status: 1,
-      data: bill
+      data: bill,
+      ...(invalidProductIds.length > 0 && { skipped_product_ids: invalidProductIds })
     });
   } catch (e) {
+    await transaction.rollback();
     (req.log || logger).error({ err: e }, 'Create bill error');
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
@@ -108,9 +137,20 @@ export async function list(req, res, next) {
     const limit = Math.max(parseInt(req.query.limit, 10) || 20, 1);
     const offset = (page - 1) * limit;
 
-    const where = { created_by: req.user.id };
+    const where = {};
+    
+    // Admin and Manager can see all bills, others see only their own
+    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
+    if (!isAdminOrManager) {
+      where.created_by = req.user.id;
+    }
+    
     if (req.query.status) where.status = req.query.status;
     if (req.query.customer_id) where.customer_id = req.query.customer_id;
+    // Allow Admin/Manager to filter by creator
+    if (req.query.created_by && isAdminOrManager) {
+      where.created_by = req.query.created_by;
+    }
 
     const { count, rows: bills } = await Bill.findAndCountAll({
       where,
@@ -176,11 +216,15 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
+    // Build where clause - Admin/Manager can access any bill
+    const where = { id: req.params.id };
+    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
+    if (!isAdminOrManager) {
+      where.created_by = req.user.id;
+    }
+
     const bill = await Bill.findOne({
-      where: {
-        id: req.params.id,
-        created_by: req.user.id
-      },
+      where,
       include: [
         {
           model: Customer,
@@ -235,11 +279,15 @@ export async function getById(req, res, next) {
 
 export async function generatePDF(req, res, next) {
   try {
+    // Build where clause - Admin/Manager can generate PDF for any bill
+    const where = { id: req.params.id };
+    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
+    if (!isAdminOrManager) {
+      where.created_by = req.user.id;
+    }
+
     const bill = await Bill.findOne({
-      where: {
-        id: req.params.id,
-        created_by: req.user.id
-      },
+      where,
       include: [
         {
           model: Customer,
@@ -254,6 +302,10 @@ export async function generatePDF(req, res, next) {
             as: 'product',
             attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
           }]
+        },{
+          model: User,
+          as: 'creator',
+          attributes: ['first_name', 'last_name', 'email', 'id', 'mobile_number']
         }
       ]
     });
@@ -289,6 +341,7 @@ export async function generatePDF(req, res, next) {
 
     const filename = `${billData.bill_number}.pdf`;
     const filepath = path.join(uploadsDir, filename);
+    
     await generateBillPDF(billData, filepath);
 
     return res.download(filepath, filename, err => {

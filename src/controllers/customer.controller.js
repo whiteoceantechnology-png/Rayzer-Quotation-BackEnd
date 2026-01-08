@@ -161,7 +161,11 @@ export async function getById(req, res, next) {
  */
 export async function update(req, res, next) {
   try {
-    const _id = req.params.id;
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'Invalid id', status: 0 });
+    }
+
     const updates = {};
     if (req.file) {
       const optimizedBuffer = await sharp(req.file.buffer)

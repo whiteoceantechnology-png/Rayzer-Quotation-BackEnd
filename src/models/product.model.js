@@ -22,7 +22,7 @@ Product.init({
   dlp: Sequelize.FLOAT,
   mrp: Sequelize.FLOAT, // lowercase mrp
   image: {
-    type: Sequelize.STRING,
+    type: Sequelize.TEXT('long'),
     defaultValue: ''
   },
   MRP: { // Uppercase MRP
