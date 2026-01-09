@@ -3,12 +3,13 @@ import fs from 'fs';
 import path from 'path';
 
 // Colors
-const TEAL = '#008080';
-const LIGHT_TEAL = '#e0f0f0';
+const TEAL = '#1a3a3a';       // Dark teal (close to black) for text/borders
+const LIGHT_TEAL = '#f8f8f8'; // Very light gray (close to white) for backgrounds
+const ROOM_BG = '#e8f4f4';    // Light teal-blue for room name header
 const WHITE = '#ffffff';
 const BLACK = '#000000';
-const RED = '#ff0000';
-const BLUE = '#0066cc';
+const RED = '#cc0000';        // Darker red for terms
+const BLUE = '#004466';       // Dark teal-blue for terms
 
 // Safe number formatting helper
 function safeFixed(value, decimals = 2) {
@@ -25,7 +26,7 @@ export function generateBillPDF(billData, outputPath) {
       // --- Transform input to expected format ---
       const customer_details = billData.customer_details || billData.customer_id || {};
       
-      // Transform sections if not present
+      // Transform sections if not present - GROUP BY ROOM NAME
       let sections = billData.sections;
       if (!sections) {
         const items = (billData.items || []).map(item => {
@@ -43,10 +44,32 @@ export function generateBillPDF(billData, outputPath) {
             rate: item.unit_price || 0,
             amount: item.total_price || 0,
             image: String(p.image || ''),
-            room_name: String(item.room_name || 'Products')
+            room_name: String(item.room_name || 'General')
           };
         });
-        sections = [{ name: 'Products', items }];
+        
+        // Group items by room_name
+        const roomGroups = {};
+        items.forEach(item => {
+          const roomName = item.room_name || 'General';
+          if (!roomGroups[roomName]) {
+            roomGroups[roomName] = [];
+          }
+          roomGroups[roomName].push(item);
+        });
+        
+        // Convert to sections array, sorted by room name
+        sections = Object.keys(roomGroups)
+          .sort((a, b) => {
+            // Put "General" at the end
+            if (a === 'General') return 1;
+            if (b === 'General') return -1;
+            return a.localeCompare(b);
+          })
+          .map(roomName => ({
+            name: roomName,
+            items: roomGroups[roomName]
+          }));
       }
 
       // Use landscape A4 for wider tables
@@ -83,7 +106,7 @@ export function generateBillPDF(billData, outputPath) {
       const colWidths = [30, 65, 35, 75, 65, 55, 55, 50, 45, 35, 65, 70, 60];
       const headers = ['No', 'Product', 'CRI', 'Driver Details', 'Chipset', 'Power Factor', 'Wattage', 'CT', 'Color', 'Pcs', 'Rate', 'Amount', 'Image'];
 
-      // Helper function to draw a cell with border
+      // Helper function to draw a cell with border (text stays within bounds)
       function drawCell(x, y, w, h, text, options = {}) {
         const { fill = WHITE, textColor = BLACK, fontSize = 7, align = 'center', bold = false, border = true } = options;
 
@@ -95,12 +118,38 @@ export function generateBillPDF(billData, outputPath) {
           doc.strokeColor(TEAL).lineWidth(0.5).rect(x, y, w, h).stroke();
         }
 
-        // Draw text
+        // Draw text with clipping to stay within cell bounds
         if (text !== undefined && text !== null) {
+          const textStr = String(text);
+          const padding = 2;
+          const maxWidth = w - (padding * 2);
+          const maxHeight = h - (padding * 2);
+          
+          doc.save(); // Save graphics state
+          
+          // Create clipping region to prevent overflow
+          doc.rect(x + padding, y + padding, maxWidth, maxHeight).clip();
+          
           doc.fillColor(textColor)
             .font(bold ? boldFont : regularFont)
-            .fontSize(fontSize)
-            .text(String(text), x + 2, y + (h - fontSize) / 2, { width: w - 4, align, lineBreak: false });
+            .fontSize(fontSize);
+          
+          // Calculate text height for vertical centering
+          const textHeight = doc.heightOfString(textStr, { width: maxWidth, lineGap: 1 });
+          const lines = Math.ceil(textHeight / (fontSize + 1));
+          const actualHeight = Math.min(textHeight, maxHeight);
+          const yOffset = Math.max(padding, (h - actualHeight) / 2);
+          
+          doc.text(textStr, x + padding, y + yOffset, { 
+            width: maxWidth, 
+            height: maxHeight,
+            align, 
+            lineBreak: true,
+            lineGap: 1,
+            ellipsis: true // Add ellipsis if text is too long
+          });
+          
+          doc.restore(); // Restore graphics state (removes clipping)
         }
       }
 
@@ -135,26 +184,41 @@ export function generateBillPDF(billData, outputPath) {
       }
 
       let yPos = margin;
+      
+      // Track content boundaries for outer border
+      const actualTableWidth = colWidths.reduce((a, b) => a + b, 0);
+      const contentStartY = yPos;
+      let contentEndY = yPos;
+      
+      // Helper to draw outer border on current page
+      function drawOuterBorder(startY, endY) {
+        doc.strokeColor(TEAL).lineWidth(2)
+          .rect(margin - 5, startY - 5, actualTableWidth + 10, endY - startY + 10)
+          .stroke();
+      }
 
       // ==================== HEADER SECTION ====================
       // Calculate header widths based on total table width
       const headerHeight = 50;
-      const tableEndX = margin + colWidths.reduce((a, b) => a + b, 0);
+      const tableEndX = margin + actualTableWidth;
 
       // Client box (left side)
       drawCell(margin, yPos, 60, 25, 'Client', { fill: LIGHT_TEAL, textColor: TEAL, bold: true });
       drawCell(margin + 60, yPos, 120, 25, customer_details.name || '', { textColor: TEAL });
 
       // Logo area (center)
-      const logoPath = path.join(process.cwd(), 'uploads', 'logo.png');
+      const logoPath = path.join(process.cwd(), 'src', 'assets', 'Rayzer_Lights_logo-2-300x95.png');
       const logoX = margin + 190;
       const logoWidth = 180;
       doc.strokeColor(TEAL).lineWidth(0.5).rect(logoX, yPos, logoWidth, headerHeight).stroke();
       if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, logoX + 10, yPos + 5, { height: 40 });
+        // Center the logo in the box
+        doc.image(logoPath, logoX + 10, yPos + 5, { height: 40, fit: [logoWidth - 20, 40] });
+      } else {
+        // Fallback to text if logo not found
+        doc.fillColor(TEAL).font(boldFont).fontSize(14).text('RAYZER', logoX + 40, yPos + 12, { width: logoWidth - 80, align: 'center' });
+        doc.font(regularFont).fontSize(9).text('architectural lighting', logoX + 40, yPos + 28, { width: logoWidth - 80, align: 'center' });
       }
-      doc.fillColor(TEAL).font(boldFont).fontSize(14).text('RAYZER', logoX + 70, yPos + 8);
-      doc.font(regularFont).fontSize(9).text('architectural lighting', logoX + 70, yPos + 24);
 
       // Address box (right side) - aligned to table end
       const addressStartX = logoX + logoWidth + 10;
@@ -177,25 +241,32 @@ export function generateBillPDF(billData, outputPath) {
       drawCell(addressStartX + 150, yPos, addressWidth - 150, 25, creatorPhone, { textColor: TEAL });
 
       yPos += 35;
+      contentEndY = yPos;
 
-      // ==================== RENDER SECTIONS ====================
+      // ==================== RENDER SECTIONS (GROUPED BY ROOM) ====================
       function renderSectionTable(sectionName, items, startY) {
         let y = startY;
         const rowHeight = 40;
         const headerRowHeight = 20;
+        const sectionTitleHeight = 25; // Taller for room name
 
         // Check if we need a new page
-        if (y + headerRowHeight + rowHeight > pageHeight - 100) {
+        if (y + sectionTitleHeight + headerRowHeight + rowHeight > pageHeight - 100) {
+          // Draw border for current page content before adding new page
+          drawOuterBorder(contentStartY, contentEndY);
           doc.addPage();
           y = margin;
+          contentEndY = margin; // Reset for new page
         }
 
-        // Section title row - use actual sum of column widths
+        // Section/Room title row - prominent styling
         const actualTableWidth = colWidths.reduce((a, b) => a + b, 0);
-        doc.fillColor(LIGHT_TEAL).rect(margin, y, actualTableWidth, headerRowHeight).fill();
-        doc.strokeColor(TEAL).lineWidth(0.5).rect(margin, y, actualTableWidth, headerRowHeight).stroke();
-        doc.fillColor(TEAL).font(boldFont).fontSize(10).text(sectionName, margin, y + 5, { width: actualTableWidth, align: 'center' });
-        y += headerRowHeight;
+        
+        // Room name header with light teal-blue background
+        doc.fillColor(ROOM_BG).rect(margin, y, actualTableWidth, sectionTitleHeight).fill();
+        doc.strokeColor(TEAL).lineWidth(0.5).rect(margin, y, actualTableWidth, sectionTitleHeight).stroke();
+        doc.fillColor(TEAL).font(boldFont).fontSize(12).text(sectionName.toUpperCase(), margin, y + 6, { width: actualTableWidth, align: 'center' });
+        y += sectionTitleHeight;
 
         // Header row
         let x = margin;
@@ -209,8 +280,12 @@ export function generateBillPDF(billData, outputPath) {
         items.forEach((item, idx) => {
           // Check for page break
           if (y + rowHeight > pageHeight - 100) {
+            // Draw border for current page content before adding new page
+            contentEndY = y;
+            drawOuterBorder(contentStartY, contentEndY);
             doc.addPage();
             y = margin;
+            contentEndY = margin; // Reset for new page
             // Redraw header on new page
             x = margin;
             headers.forEach((header, i) => {
@@ -236,21 +311,23 @@ export function generateBillPDF(billData, outputPath) {
           drawImageCell(x, y, colWidths[12], rowHeight, item.image);
 
           y += rowHeight;
+          contentEndY = y; // Track content end
         });
 
         return y;
       }
 
-      // Render all sections
+      // Render all sections (grouped by room)
       if (sections && Array.isArray(sections)) {
-        sections.forEach(section => {
-          yPos = renderSectionTable(section.name, section.items, yPos + 5);
+        sections.forEach((section, sectionIndex) => {
+          // Add spacing between room tables (except before first)
+          const sectionSpacing = sectionIndex > 0 ? 15 : 5;
+          yPos = renderSectionTable(section.name, section.items, yPos + sectionSpacing);
         });
       }
 
       // ==================== TOTALS BOX ====================
       yPos += 10;
-      const actualTableWidth = colWidths.reduce((a, b) => a + b, 0);
       const totalsBoxEndX = margin + actualTableWidth;
       const totalsWidth = 60;
       const totalsValueWidth = 80;
@@ -259,8 +336,11 @@ export function generateBillPDF(billData, outputPath) {
 
       // Check for page break before totals
       if (yPos + 120 > pageHeight - 50) {
+        // Draw border for current page before adding new page
+        drawOuterBorder(contentStartY, contentEndY);
         doc.addPage();
         yPos = margin;
+        contentEndY = margin;
       }
 
       const subtotal = Number(billData.subtotal) || 0;
@@ -290,34 +370,42 @@ export function generateBillPDF(billData, outputPath) {
       yPos += totalsRowHeight;
       drawCell(totalsX, yPos, totalsWidth, totalsRowHeight, 'A/C', { fill: LIGHT_TEAL, textColor: TEAL, bold: true, align: 'center' });
       drawCell(totalsX + totalsWidth, yPos, totalsValueWidth, totalsRowHeight, `₹${safeFixed(billData.account)}`, { textColor: TEAL, align: 'center' });
+      yPos += totalsRowHeight;
+      
+      // Draw outer border wrapping header, tables, and totals
+      contentEndY = yPos;
+      drawOuterBorder(contentStartY, contentEndY);
+      
       // ==================== TERMS AND CONDITIONS ====================
       // Start new page for terms if needed
       doc.addPage();
       yPos = margin;
 
-      // Terms box border
-      doc.strokeColor(BLACK).lineWidth(1).rect(margin, yPos, 400, 220).stroke();
-      yPos += 10;
+      // Terms box - use wider width to fit content
+      const termsBoxWidth = actualTableWidth; // Use same width as table
+      const termsBoxHeight = 240;
+      
+      // Draw terms box border
+      doc.strokeColor(BLACK).lineWidth(1).rect(margin, yPos, termsBoxWidth, termsBoxHeight).stroke();
+      
+      const termsContentWidth = termsBoxWidth - 30; // Padding for text
+      const termsStartY = yPos;
+      yPos += 15;
 
-      doc.fillColor(BLACK).font(boldFont).fontSize(11).text('Terms and Conditions', margin + 10, yPos);
-      yPos += 20;
+      doc.fillColor(BLACK).font(boldFont).fontSize(12).text('Terms and Conditions', margin + 15, yPos);
+      yPos += 25;
 
       const terms = [
         { text: '1. 100% Payment paid upon delivery.', color: RED, bold: true, underline: true },
         { text: '2. Quotation Validity 15 Working days.', color: RED, bold: true, underline: true },
         { text: '3. Prices and specifications may change without prior notice.', color: BLUE },
         { text: '4. Goods once sold will not be taken back or exchanged.', color: BLUE },
-        { text: '5. Warranty terms would be void if goods are used under', color: BLUE },
-        { text: '   a) Improper conditions like abnormal surge, continuous voltage fluctuations, wrong installation,', color: BLUE, indent: true },
-        { text: '      operations with heavy equipments, use by D.G sets, etc.', color: BLUE, indent: true },
-        { text: '   b) Any damage to the fixture due to physical fall, painting operations at site, etc', color: BLUE, indent: true },
-        { text: '      shall not be covered under warranty.', color: BLUE, indent: true },
-        { text: '6. The pricing for customised products is subject to adjustment based on specific', color: BLUE },
-        { text: '   project requirements.', color: BLUE, indent: true },
-        { text: '7. The Payment must be done in advance prior to the delivery of the said', color: BLUE },
-        { text: '   goods.', color: BLUE, indent: true },
-        { text: '8. All spotlights come with a warranty period of 36 months.', color: BLUE, boldPart: '36 months' },
-        { text: '9. Strip Lights come with a warranty period of 24 months', color: BLUE, boldPart: '24 months' },
+        { text: '5. Warranty terms would be void if goods are used under improper conditions like abnormal surge, continuous voltage fluctuations, wrong installation, operations with heavy equipments, use by D.G sets, etc.', color: BLUE },
+        { text: '6. Any damage to the fixture due to physical fall, painting operations at site, etc shall not be covered under warranty.', color: BLUE },
+        { text: '7. The pricing for customised products is subject to adjustment based on specific project requirements.', color: BLUE },
+        { text: '8. The Payment must be done in advance prior to the delivery of the said goods.', color: BLUE },
+        { text: '9. All spotlights come with a warranty period of 36 months.', color: BLUE },
+        { text: '10. Strip Lights come with a warranty period of 24 months.', color: BLUE },
       ];
 
       terms.forEach(term => {
@@ -325,12 +413,21 @@ export function generateBillPDF(billData, outputPath) {
           .font(term.bold ? boldFont : regularFont)
           .fontSize(9);
 
+        const textOptions = { 
+          width: termsContentWidth, 
+          lineBreak: true,
+          lineGap: 2
+        };
+        
         if (term.underline) {
-          doc.text(term.text, margin + 15, yPos, { underline: true });
-        } else {
-          doc.text(term.text, margin + 15, yPos);
+          textOptions.underline = true;
         }
-        yPos += 13;
+        
+        // Calculate height of this term for proper spacing
+        const textHeight = doc.heightOfString(term.text, textOptions);
+        
+        doc.text(term.text, margin + 15, yPos, textOptions);
+        yPos += textHeight + 5;
       });
 
       // Handle stream errors before ending

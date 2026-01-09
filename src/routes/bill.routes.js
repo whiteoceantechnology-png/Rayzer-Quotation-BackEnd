@@ -122,7 +122,19 @@ router.get('/:id', authJwt, BillController.getById);
  * @swagger
  * /bills/{id}/pdf:
  *   get:
- *     summary: Generate Bill PDF
+ *     summary: Generate & Download Bill PDF Quotation
+ *     description: |
+ *       Generates a professional PDF quotation with:
+ *       - Company header with logo
+ *       - Customer and sales rep details
+ *       - Products grouped by room name
+ *       - Product images (supports base64 and file paths)
+ *       - Rupee symbol (₹) with custom fonts
+ *       - Discount, GST, and total calculations
+ *       - Payment details (Cash/Account)
+ *       - Terms and conditions page
+ *       
+ *       **PDF Format:** Landscape A4
  *     tags: [Bills]
  *     security:
  *       - bearerAuth: []
@@ -131,15 +143,20 @@ router.get('/:id', authJwt, BillController.getById);
  *         name: id
  *         required: true
  *         schema:
- *           type: string
+ *           type: integer
+ *         description: Bill ID
  *     responses:
  *       200:
- *         description: PDF File
+ *         description: PDF file download
  *         content:
  *           application/pdf:
  *             schema:
  *               type: string
  *               format: binary
+ *       404:
+ *         description: Bill not found
+ *       401:
+ *         description: Unauthorized
  */
 router.get('/:id/pdf', authJwt, BillController.generatePDF);
 

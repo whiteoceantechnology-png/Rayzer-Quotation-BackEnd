@@ -366,7 +366,7 @@ export async function getBeamAngles(req, res, next) {
     if (type) where.type = type;
 
     const beamAngles = await getDistinctValues('beam_angle', where);
-
+    console.log('Distinct beam angles:', beamAngles);
     const cacheKey = generateCacheKey('products:selection:beamangles', req.query);
     const cachedData = await CacheService.get(cacheKey);
     if (cachedData) {
@@ -377,13 +377,8 @@ export async function getBeamAngles(req, res, next) {
 
     // Sort numerically
     const sortedAngles = beamAngles
-      .map(angle => {
-        const num = parseInt(angle, 10);
-        return isNaN(num) ? null : num;
-      })
-      .filter(angle => angle !== null)
       .sort((a, b) => a - b)
-      .map(angle => angle.toString());
+      .map(angle => angle);
 
     const total = sortedAngles.length;
     const paginatedAngles = sortedAngles.slice((page - 1) * limit, page * limit);
@@ -692,7 +687,6 @@ export async function getFinalProduct(req, res, next) {
     if (cachedData) {
       return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Final product fetched (cached)' });
     }
-
 
     if (!finalProduct) {
       return res.status(HTTPStatus.NOT_FOUND).json({

@@ -24,10 +24,6 @@ Product.init({
   image: {
     type: Sequelize.TEXT('long'),
     defaultValue: ''
-  },
-  MRP: { // Uppercase MRP
-    type: Sequelize.FLOAT,
-    defaultValue: 0
   }
 }, {
   sequelize,

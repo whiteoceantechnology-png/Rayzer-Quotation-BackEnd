@@ -1,6 +1,7 @@
 /**
  * Product Upload Controller
  * Optimized for high-volume Excel uploads with batched transactions
+ * Handles Cloudflare 100s timeout by streaming progress
  */
 
 import HTTPStatus from 'http-status';
@@ -9,8 +10,7 @@ import Product from '../models/product.model.js';
 import logger from '../utils/logger.js';
 import CacheService from '../services/cache.js';
 
-const BATCH_SIZE = 2000;
-const TRANSACTION_BATCH_SIZE = 10000; // Commit transaction every N rows to avoid long locks
+const BATCH_SIZE = 500; // Smaller batches for faster commits
 
 function parseNumber(val) {
   if (val == null) return null;
@@ -22,38 +22,6 @@ function parseNumber(val) {
 function clean(text) {
   if (text == null) return '';
   return String(text).trim();
-}
-
-function mapSheetImages(workbook, worksheet) {
-  const imageMap = new Map();
-  try {
-    const sheetImages = worksheet.getImages?.() || [];
-
-    sheetImages.forEach(({ imageId, range }) => {
-      const media = workbook.model?.media?.find((m) => m.index === imageId);
-      if (!media) return;
-
-      const buffer =
-        media.buffer ||
-        (media.base64 ? Buffer.from(media.base64, 'base64') : null);
-      if (!buffer) return;
-
-      const extension =
-        media.extension ||
-        media.contentType?.split('/').pop() ||
-        'png';
-
-      const startRow = ((range.tl?.nativeRow ?? range.tl?.row) ?? 0) + 1;
-      const endRow = ((range.br?.nativeRow ?? range.br?.row) ?? startRow - 1) + 1;
-
-      for (let row = startRow; row <= endRow; row += 1) {
-        imageMap.set(row, { buffer, extension });
-      }
-    });
-  } catch (err) {
-    // Silently handle image mapping errors - images are optional
-  }
-  return imageMap;
 }
 
 function getHeaderMap(worksheet) {
@@ -73,6 +41,54 @@ function getCell(row, headers, name) {
   return cell.text?.trim?.() ?? cell.value ?? '';
 }
 
+/**
+ * Extract embedded images from Excel worksheet
+ * Returns a map of row number -> base64 image data
+ */
+function extractEmbeddedImages(workbook, worksheet) {
+  const imageMap = {};
+  
+  try {
+    // Get all images from the workbook
+    const images = workbook.model?.media || [];
+    
+    // Get image positions from worksheet drawings
+    if (worksheet.getImages && typeof worksheet.getImages === 'function') {
+      const wsImages = worksheet.getImages();
+      
+      wsImages.forEach((img) => {
+        try {
+          const imageId = img.imageId;
+          const imageData = images[imageId];
+          
+          if (imageData && imageData.buffer) {
+            // Get the row number from the image anchor
+            const row = img.range?.tl?.nativeRow ?? img.range?.tl?.row;
+            if (row !== undefined) {
+              // Convert to 1-based row number (add 1 since rows are 0-indexed in range)
+              const rowNum = row + 1;
+              
+              // Convert buffer to base64 with data URI prefix
+              const extension = imageData.extension || 'png';
+              const mimeType = extension === 'jpg' || extension === 'jpeg' 
+                ? 'image/jpeg' 
+                : `image/${extension}`;
+              const base64 = imageData.buffer.toString('base64');
+              imageMap[rowNum] = `data:${mimeType};base64,${base64}`;
+            }
+          }
+        } catch (imgErr) {
+          // Skip this image on error
+        }
+      });
+    }
+  } catch (err) {
+    // Return empty map on error
+  }
+  
+  return imageMap;
+}
+
 export async function uploadExcel(req, res, next) {
   const requestLogger = req.log || logger;
   const startTime = Date.now();
@@ -84,35 +100,63 @@ export async function uploadExcel(req, res, next) {
 
     requestLogger.info({ fileSize: req.file.size, fileName: req.file.originalname }, 'Starting Excel upload');
 
+    // Disable request timeout for this endpoint
+    req.setTimeout(0);
+    res.setTimeout(0);
+
+    // Set headers for SSE-style streaming (Cloudflare compatible)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.flushHeaders();
+    
+    // Helper to send SSE events
+    const sendEvent = (data) => {
+      try {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch (e) {
+        // Response might be closed
+      }
+    };
+
+    // Send initial event
+    sendEvent({ type: 'start', message: 'Processing file...' });
+
     const workbook = new Excel.Workbook();
     await workbook.xlsx.load(req.file.buffer);
     
-    // Try second sheet first, fall back to first sheet
-    let sheet = workbook.getWorksheet('products') || workbook.getWorksheet(0);
-    
+    let sheet = workbook.getWorksheet('products') || workbook.worksheets[0];
     if (!sheet) {
-      return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'No sheet found', status: 0 });
+      sendEvent({ type: 'error', message: 'No sheet found' });
+      return res.end();
     }
-
-    requestLogger.debug({ sheetName: sheet.name, rowCount: sheet.rowCount }, 'Sheet loaded');
 
     const headers = getHeaderMap(sheet);
-    const imageMap = mapSheetImages(workbook, sheet);
 
-    // Validate required headers
     if (!headers['product']) {
-      return res.status(HTTPStatus.BAD_REQUEST).json({ 
-        message: 'Missing required column: product', 
-        status: 0 
-      });
+      sendEvent({ type: 'error', message: 'Missing required column: product' });
+      return res.end();
     }
+
+    // Extract embedded images from Excel (row number -> base64)
+    const embeddedImages = extractEmbeddedImages(workbook, sheet);
+    const embeddedImageCount = Object.keys(embeddedImages).length;
+    
+    const totalRows = sheet.rowCount - 1;
+    sendEvent({ 
+      type: 'info', 
+      message: `Found ${totalRows} rows, ${embeddedImageCount} embedded images`, 
+      total: totalRows,
+      images: embeddedImageCount
+    });
 
     let batch = [];
     let processed = 0;
     let inserted = 0;
     let errors = 0;
     let skipped = 0;
-    const totalRows = sheet.rowCount - 1; // Exclude header
+    let lastProgressUpdate = 0;
 
     const sequelize = Product.sequelize;
 
@@ -124,19 +168,25 @@ export async function uploadExcel(req, res, next) {
           validate: false,
           hooks: false,
           transaction,
-          returning: false // Slight performance boost
+          returning: false,
+          logging: false, // Disable SQL logging for performance
         });
         inserted += result.length;
       } catch (err) {
-        requestLogger.error({ err, batchSize: batch.length }, 'Batch insert error');
+        requestLogger.error({ err: err.message, batchSize: batch.length }, 'Batch insert error');
         errors += batch.length;
       }
       processed += batch.length;
       batch = [];
+      
+      // Send progress update every 10%
+      const progressPercent = Math.floor((processed / totalRows) * 100);
+      if (progressPercent >= lastProgressUpdate + 10) {
+        lastProgressUpdate = progressPercent;
+        sendEvent({ type: 'progress', percent: progressPercent, processed, total: totalRows });
+      }
     }
 
-    // Process in transaction chunks to avoid long-running locks
-    let transactionRowCount = 0;
     let currentTransaction = await sequelize.transaction();
 
     try {
@@ -149,13 +199,12 @@ export async function uploadExcel(req, res, next) {
           continue;
         }
 
-        const rowImage = imageMap.get(r);
-        const inlineImage = clean(getCell(row, headers, 'image'));
-        const imageValue = rowImage
-          ? `data:image/${rowImage.extension};base64,${rowImage.buffer.toString('base64')}`
-          : inlineImage;
+        // Get image: prefer embedded image, fall back to cell value (URL or base64 text)
+        const cellImageValue = clean(getCell(row, headers, 'image')) || null;
+        const embeddedImage = embeddedImages[r] || null;
+        const imageValue = embeddedImage || cellImageValue;
 
-        const doc = {
+        batch.push({
           product: productVal,
           color: clean(getCell(row, headers, 'color')),
           chipset: clean(getCell(row, headers, 'chipset')),
@@ -169,27 +218,16 @@ export async function uploadExcel(req, res, next) {
           warranty: clean(getCell(row, headers, 'warranty')),
           dlp: parseNumber(getCell(row, headers, 'dlp')),
           mrp: parseNumber(getCell(row, headers, 'mrp')),
-          image: imageValue || null,
-        };
-
-        batch.push(doc);
-        transactionRowCount++;
+          image: imageValue,
+        });
 
         if (batch.length >= BATCH_SIZE) {
           await flushBatch(currentTransaction);
-        }
-
-        // Commit transaction periodically to avoid long locks
-        if (transactionRowCount >= TRANSACTION_BATCH_SIZE) {
-          await flushBatch(currentTransaction);
           await currentTransaction.commit();
           currentTransaction = await sequelize.transaction();
-          transactionRowCount = 0;
-          requestLogger.debug({ processed, inserted, total: totalRows }, 'Transaction checkpoint');
         }
       }
 
-      // Flush remaining batch
       await flushBatch(currentTransaction);
       await currentTransaction.commit();
 
@@ -198,32 +236,34 @@ export async function uploadExcel(req, res, next) {
       throw err;
     }
 
-    // Clear product cache after upload
+    // Clear cache
     try {
       CacheService.clear();
     } catch (cacheErr) {
-      requestLogger.warn({ err: cacheErr }, 'Failed to clear cache');
+      // Ignore
     }
 
     const duration = Date.now() - startTime;
     requestLogger.info({ processed, inserted, skipped, errors, duration }, 'Upload complete');
 
-    return res.status(HTTPStatus.OK).json({
+    // Send final result
+    sendEvent({
+      type: 'complete',
       status: 1,
       message: 'Upload complete',
-      data: {
-        processed,
-        inserted,
-        skipped,
-        errors,
-        total_rows: totalRows,
-        duration_ms: duration
-      }
+      data: { processed, inserted, skipped, errors, total_rows: totalRows, duration_ms: duration }
     });
+    
+    return res.end();
 
   } catch (e) {
     requestLogger.error({ err: e }, 'Upload error');
-    e.status = HTTPStatus.BAD_REQUEST;
-    return next(e);
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: e.message || 'Upload error' })}\n\n`);
+      res.end();
+    } catch (writeErr) {
+      e.status = HTTPStatus.BAD_REQUEST;
+      return next(e);
+    }
   }
 }

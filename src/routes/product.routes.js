@@ -84,22 +84,50 @@ router.get('/all', authJwt, checkRole([ROLES.ADMIN]), listAll);
  * @swagger
  * /products/upload:
  *   post:
- *     summary: Upload Product Excel
+ *     summary: Bulk Upload Products via Excel (SSE Streaming)
+ *     description: |
+ *       Upload an Excel file to bulk import products. Uses Server-Sent Events (SSE) 
+ *       for real-time progress updates. Compatible with Cloudflare's 100s timeout.
+ *       
+ *       **Excel Format:**
+ *       - Required column: `product`
+ *       - Optional: `color`, `chipset`, `type`, `beam_angle`, `ct`, `cri`, `drive`, 
+ *         `power_factor`, `drive_details`, `warranty`, `dlp`, `mrp`, `image`
+ *       
+ *       **SSE Events:**
+ *       - `start`: Upload started
+ *       - `progress`: Progress update with percentage
+ *       - `complete`: Upload finished with summary
+ *       - `error`: Error occurred
  *     tags: [Products]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
+ *       required: true
  *       content:
  *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required:
+ *               - file
  *             properties:
  *               file:
  *                 type: string
  *                 format: binary
+ *                 description: Excel file (.xlsx)
  *     responses:
  *       200:
- *         description: Products uploaded
+ *         description: SSE stream with upload progress
+ *         content:
+ *           text/event-stream:
+ *             schema:
+ *               $ref: '#/components/schemas/UploadProgress'
+ *       400:
+ *         description: File required or invalid format
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Admin role required
  */
 router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), uploadExcelFile.single('file'), uploadExcel);
 

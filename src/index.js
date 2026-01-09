@@ -78,8 +78,14 @@ app.use('/api', ApiRoutes);
 // API Documentation (disable in production if needed)
 if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
-    customSiteTitle: 'Rayzer API Documentation',
+    customSiteTitle: 'Rayzer Lights API Documentation',
     customCss: '.swagger-ui .topbar { display: none }',
+    swaggerOptions: {
+      persistAuthorization: true,
+      docExpansion: 'list',
+      filter: true,
+      showRequestDuration: true,
+    },
   }));
 }
 

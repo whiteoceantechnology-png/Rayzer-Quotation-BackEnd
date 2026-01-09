@@ -341,7 +341,7 @@ export async function generatePDF(req, res, next) {
 
     const filename = `${billData.bill_number}.pdf`;
     const filepath = path.join(uploadsDir, filename);
-    
+    console.log(billData)
     await generateBillPDF(billData, filepath);
 
     return res.download(filepath, filename, err => {
