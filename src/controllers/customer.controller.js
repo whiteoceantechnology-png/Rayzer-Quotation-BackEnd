@@ -2,6 +2,7 @@ import HTTPStatus from 'http-status';
 import Joi from 'joi';
 import { Op } from 'sequelize';
 import Customer from '../models/customer.model.js';
+import User from '../models/user.model.js';
 import logger from '../utils/logger.js';
 import constants from '../config/constants.js';
 import sharp from 'sharp';
@@ -109,10 +110,18 @@ export async function list(req, res, next) {
 
     const { count, rows: items } = await Customer.findAndCountAll({
       where,
+    
       order: [['created_at', 'DESC']],
       offset,
       limit,
-      attributes: ['id', 'name', 'mobile_number', 'company_name', 'location', 'created_by', 'created_at', 'updated_at']
+      attributes: ['id', 'name', 'mobile_number', 'company_name', 'location', 'created_by', 'created_at', 'updated_at'],
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['first_name', 'last_name'], // Assuming the User model has a 'first_name' and 'last_name' field
+        },
+      ],
     });
 
     return res.status(HTTPStatus.OK).json({

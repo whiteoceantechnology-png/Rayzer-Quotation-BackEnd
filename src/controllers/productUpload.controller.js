@@ -1,16 +1,17 @@
 /**
- * Product Upload Controller
- * Optimized for high-volume Excel uploads with batched transactions
- * Handles Cloudflare 100s timeout by streaming progress
+ * Product Upload Controller - Production SaaS Grade
+ * Handles large Excel uploads with embedded images
  */
 
 import HTTPStatus from 'http-status';
 import Excel from 'exceljs';
+import fs from 'fs';
 import Product from '../models/product.model.js';
 import logger from '../utils/logger.js';
 import CacheService from '../services/cache.js';
 
-const BATCH_SIZE = 500; // Smaller batches for faster commits
+const BATCH_SIZE = 500;
+const PROGRESS_INTERVAL = 5;
 
 function parseNumber(val) {
   if (val == null) return null;
@@ -19,251 +20,249 @@ function parseNumber(val) {
   return Number.isNaN(n) ? null : n;
 }
 
-function clean(text) {
-  if (text == null) return '';
-  return String(text).trim();
+function clean(val) {
+  if (val == null) return '';
+  return String(val).trim();
 }
 
-function getHeaderMap(worksheet) {
-  const headerRow = worksheet.getRow(1);
+function getHeaderMap(row) {
   const headers = {};
-  headerRow.values.forEach((val, idx) => {
-    if (!val) return;
-    headers[clean(val).toLowerCase()] = idx;
+  row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+    const name = clean(cell.value).toLowerCase();
+    if (name) headers[name] = colNumber;
   });
   return headers;
 }
 
-function getCell(row, headers, name) {
-  const index = headers[name.toLowerCase()];
-  if (!index) return '';
-  const cell = row.getCell(index);
-  return cell.text?.trim?.() ?? cell.value ?? '';
+function getCellValue(row, headers, name) {
+  const col = headers[name.toLowerCase()];
+  if (!col) return '';
+  const cell = row.getCell(col);
+  return cell.text?.trim?.() ?? clean(cell.value);
 }
 
-/**
- * Extract embedded images from Excel worksheet
- * Returns a map of row number -> base64 image data
- */
-function extractEmbeddedImages(workbook, worksheet) {
+function extractImages(workbook, worksheet) {
   const imageMap = {};
-  
   try {
-    // Get all images from the workbook
-    const images = workbook.model?.media || [];
-    
-    // Get image positions from worksheet drawings
-    if (worksheet.getImages && typeof worksheet.getImages === 'function') {
-      const wsImages = worksheet.getImages();
-      
-      wsImages.forEach((img) => {
-        try {
-          const imageId = img.imageId;
-          const imageData = images[imageId];
-          
-          if (imageData && imageData.buffer) {
-            // Get the row number from the image anchor
-            const row = img.range?.tl?.nativeRow ?? img.range?.tl?.row;
-            if (row !== undefined) {
-              // Convert to 1-based row number (add 1 since rows are 0-indexed in range)
-              const rowNum = row + 1;
-              
-              // Convert buffer to base64 with data URI prefix
-              const extension = imageData.extension || 'png';
-              const mimeType = extension === 'jpg' || extension === 'jpeg' 
-                ? 'image/jpeg' 
-                : `image/${extension}`;
-              const base64 = imageData.buffer.toString('base64');
-              imageMap[rowNum] = `data:${mimeType};base64,${base64}`;
-            }
-          }
-        } catch (imgErr) {
-          // Skip this image on error
+    const media = workbook.model?.media || [];
+    const wsImages = worksheet.getImages?.() || [];
+    for (const img of wsImages) {
+      try {
+        const data = media[img.imageId];
+        if (data?.buffer) {
+          const rowNum = (img.range?.tl?.nativeRow ?? img.range?.tl?.row) + 1;
+          const ext = data.extension || 'png';
+          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/' + ext;
+          imageMap[rowNum] = 'data:' + mime + ';base64,' + data.buffer.toString('base64');
         }
-      });
+      } catch (e) {}
     }
-  } catch (err) {
-    // Return empty map on error
-  }
-  
+  } catch (e) {}
   return imageMap;
 }
 
-export async function uploadExcel(req, res, next) {
-  const requestLogger = req.log || logger;
-  const startTime = Date.now();
+/**
+ * Insert batch - splits into smaller chunks if images present
+ * MariaDB max_allowed_packet is typically 16MB, base64 images can be large
+ */
+async function insertBatchSQL(sequelize, batch, log) {
+  if (!batch.length) return 0;
   
+  // Check if batch has images - if so, use smaller chunks
+  const hasImages = batch.some(r => r.image && r.image.length > 1000);
+  const chunkSize = hasImages ? 20 : 500; // Small chunks for images
+  
+  const columns = [
+    'product', 'color', 'chipset', 'type', 'beam_angle', 'ct', 'cri',
+    'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image',
+    'created_at', 'updated_at'
+  ];
+  
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  
+  const escape = (v) => {
+    if (v === null || v === undefined || v === '') return 'NULL';
+    if (typeof v === 'number') return v;
+    return "'" + String(v).replace(/\\/g, '\\\\').replace(/'/g, "''") + "'";
+  };
+
+  let totalInserted = 0;
+
+  // Process in chunks
+  for (let i = 0; i < batch.length; i += chunkSize) {
+    const chunk = batch.slice(i, i + chunkSize);
+    
+    const values = chunk.map(r => '(' + [
+      r.product, r.color, r.chipset, r.type, r.beam_angle, r.ct, r.cri,
+      r.drive, r.power_factor, r.drive_details, r.warranty, r.dlp, r.mrp, r.image,
+      now, now
+    ].map(escape).join(',') + ')').join(',');
+
+    const sql = 'INSERT IGNORE INTO products (' + columns.join(',') + ') VALUES ' + values;
+
+    try {
+      await sequelize.query(sql, { type: sequelize.QueryTypes.INSERT, logging: false });
+      totalInserted += chunk.length;
+    } catch (err) {
+      // If chunk still too big, try one by one
+      if (err.message.includes('max_allowed_packet')) {
+        for (const row of chunk) {
+          try {
+            const singleValue = '(' + [
+              row.product, row.color, row.chipset, row.type, row.beam_angle, row.ct, row.cri,
+              row.drive, row.power_factor, row.drive_details, row.warranty, row.dlp, row.mrp, row.image,
+              now, now
+            ].map(escape).join(',') + ')';
+            const singleSql = 'INSERT IGNORE INTO products (' + columns.join(',') + ') VALUES ' + singleValue;
+            await sequelize.query(singleSql, { type: sequelize.QueryTypes.INSERT, logging: false });
+            totalInserted++;
+          } catch (singleErr) {
+            log.error({ err: singleErr.message, product: row.product }, 'Single row insert error');
+          }
+        }
+      } else {
+        log.error({ err: err.message, chunkSize: chunk.length }, 'Chunk insert error');
+      }
+    }
+  }
+
+  return totalInserted;
+}
+
+export async function uploadExcel(req, res, next) {
+  const log = req.log || logger;
+  const startTime = Date.now();
+  let filePath = null;
+
   try {
     if (!req.file) {
       return res.status(HTTPStatus.BAD_REQUEST).json({ message: 'File required', status: 0 });
     }
 
-    requestLogger.info({ fileSize: req.file.size, fileName: req.file.originalname }, 'Starting Excel upload');
+    filePath = req.file.path;
+    log.info({ fileSize: req.file.size, fileName: req.file.originalname, path: filePath }, 'Excel upload started');
 
-    // Disable request timeout for this endpoint
     req.setTimeout(0);
     res.setTimeout(0);
-
-    // Set headers for SSE-style streaming (Cloudflare compatible)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
-    
-    // Helper to send SSE events
-    const sendEvent = (data) => {
-      try {
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-      } catch (e) {
-        // Response might be closed
-      }
+
+    const send = (data) => {
+      try { res.write('data: ' + JSON.stringify(data) + '\n\n'); } catch (e) {}
     };
 
-    // Send initial event
-    sendEvent({ type: 'start', message: 'Processing file...' });
+    send({ type: 'start', message: 'Reading Excel file...' });
 
     const workbook = new Excel.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
-    
-    let sheet = workbook.getWorksheet('products') || workbook.worksheets[0];
+    await workbook.xlsx.readFile(filePath);
+
+    const sheet = workbook.getWorksheet('products') || workbook.worksheets[0];
     if (!sheet) {
-      sendEvent({ type: 'error', message: 'No sheet found' });
+      send({ type: 'error', message: 'No worksheet found' });
+      if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
       return res.end();
     }
 
-    const headers = getHeaderMap(sheet);
-
+    const headers = getHeaderMap(sheet.getRow(1));
     if (!headers['product']) {
-      sendEvent({ type: 'error', message: 'Missing required column: product' });
+      send({ type: 'error', message: 'Missing required column: product' });
+      if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
       return res.end();
     }
 
-    // Extract embedded images from Excel (row number -> base64)
-    const embeddedImages = extractEmbeddedImages(workbook, sheet);
-    const embeddedImageCount = Object.keys(embeddedImages).length;
-    
-    const totalRows = sheet.rowCount - 1;
-    sendEvent({ 
-      type: 'info', 
-      message: `Found ${totalRows} rows, ${embeddedImageCount} embedded images`, 
-      total: totalRows,
-      images: embeddedImageCount
-    });
+    send({ type: 'info', message: 'Extracting images...' });
+    const images = extractImages(workbook, sheet);
 
+    const totalRows = sheet.rowCount - 1;
+    send({ type: 'info', message: 'Found ' + totalRows + ' rows, ' + Object.keys(images).length + ' images', total: totalRows, images: Object.keys(images).length });
+
+    const sequelize = Product.sequelize;
     let batch = [];
     let processed = 0;
     let inserted = 0;
-    let errors = 0;
     let skipped = 0;
-    let lastProgressUpdate = 0;
+    let errors = 0;
+    let lastPercent = 0;
 
-    const sequelize = Product.sequelize;
+    send({ type: 'info', message: 'Processing rows...' });
 
-    async function flushBatch(transaction) {
-      if (!batch.length) return;
-      try {
-        const result = await Product.bulkCreate(batch, {
-          ignoreDuplicates: true,
-          validate: false,
-          hooks: false,
-          transaction,
-          returning: false,
-          logging: false, // Disable SQL logging for performance
-        });
-        inserted += result.length;
-      } catch (err) {
-        requestLogger.error({ err: err.message, batchSize: batch.length }, 'Batch insert error');
-        errors += batch.length;
+    for (let rowNum = 2; rowNum <= sheet.rowCount; rowNum++) {
+      const row = sheet.getRow(rowNum);
+      const productName = getCellValue(row, headers, 'product');
+
+      if (!productName) {
+        skipped++;
+        processed++;
+        continue;
       }
-      processed += batch.length;
-      batch = [];
-      
-      // Send progress update every 10%
-      const progressPercent = Math.floor((processed / totalRows) * 100);
-      if (progressPercent >= lastProgressUpdate + 10) {
-        lastProgressUpdate = progressPercent;
-        sendEvent({ type: 'progress', percent: progressPercent, processed, total: totalRows });
-      }
-    }
 
-    let currentTransaction = await sequelize.transaction();
+      batch.push({
+        product: productName,
+        color: getCellValue(row, headers, 'color'),
+        chipset: getCellValue(row, headers, 'chipset'),
+        type: getCellValue(row, headers, 'type'),
+        beam_angle: getCellValue(row, headers, 'beam_angle'),
+        ct: getCellValue(row, headers, 'ct'),
+        cri: getCellValue(row, headers, 'cri'),
+        drive: getCellValue(row, headers, 'drive'),
+        power_factor: getCellValue(row, headers, 'power_factor'),
+        drive_details: getCellValue(row, headers, 'drive_details'),
+        warranty: getCellValue(row, headers, 'warranty'),
+        dlp: parseNumber(getCellValue(row, headers, 'dlp')),
+        mrp: parseNumber(getCellValue(row, headers, 'mrp')),
+        image: images[rowNum] || getCellValue(row, headers, 'image') || null,
+      });
+      processed++;
 
-    try {
-      for (let r = 2; r <= sheet.rowCount; r++) {
-        const row = sheet.getRow(r);
-        const productVal = clean(getCell(row, headers, 'product'));
-        
-        if (!productVal) {
-          skipped++;
-          continue;
-        }
+      if (batch.length >= BATCH_SIZE) {
+        const count = await insertBatchSQL(sequelize, batch, log);
+        inserted += count;
+        if (count < batch.length) errors += (batch.length - count);
+        batch = [];
 
-        // Get image: prefer embedded image, fall back to cell value (URL or base64 text)
-        const cellImageValue = clean(getCell(row, headers, 'image')) || null;
-        const embeddedImage = embeddedImages[r] || null;
-        const imageValue = embeddedImage || cellImageValue;
-
-        batch.push({
-          product: productVal,
-          color: clean(getCell(row, headers, 'color')),
-          chipset: clean(getCell(row, headers, 'chipset')),
-          type: clean(getCell(row, headers, 'type')),
-          beam_angle: clean(getCell(row, headers, 'beam_angle')),
-          ct: clean(getCell(row, headers, 'ct')),
-          cri: clean(getCell(row, headers, 'cri')),
-          drive: clean(getCell(row, headers, 'drive')),
-          power_factor: clean(getCell(row, headers, 'power_factor')),
-          drive_details: clean(getCell(row, headers, 'drive_details')),
-          warranty: clean(getCell(row, headers, 'warranty')),
-          dlp: parseNumber(getCell(row, headers, 'dlp')),
-          mrp: parseNumber(getCell(row, headers, 'mrp')),
-          image: imageValue,
-        });
-
-        if (batch.length >= BATCH_SIZE) {
-          await flushBatch(currentTransaction);
-          await currentTransaction.commit();
-          currentTransaction = await sequelize.transaction();
+        const percent = Math.floor((processed / totalRows) * 100);
+        if (percent >= lastPercent + PROGRESS_INTERVAL) {
+          lastPercent = percent;
+          send({ type: 'progress', percent, processed, total: totalRows, inserted });
         }
       }
-
-      await flushBatch(currentTransaction);
-      await currentTransaction.commit();
-
-    } catch (err) {
-      await currentTransaction.rollback();
-      throw err;
     }
 
-    // Clear cache
-    try {
-      CacheService.clear();
-    } catch (cacheErr) {
-      // Ignore
+    // Final batch
+    if (batch.length > 0) {
+      const count = await insertBatchSQL(sequelize, batch, log);
+      inserted += count;
+      if (count < batch.length) errors += (batch.length - count);
     }
+
+    // Cleanup
+    if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
+    try { CacheService.clear(); } catch (e) {}
 
     const duration = Date.now() - startTime;
-    requestLogger.info({ processed, inserted, skipped, errors, duration }, 'Upload complete');
+    log.info({ processed, inserted, skipped, errors, duration }, 'Upload complete');
 
-    // Send final result
-    sendEvent({
+    send({
       type: 'complete',
       status: 1,
       message: 'Upload complete',
       data: { processed, inserted, skipped, errors, total_rows: totalRows, duration_ms: duration }
     });
-    
+
     return res.end();
 
-  } catch (e) {
-    requestLogger.error({ err: e }, 'Upload error');
+  } catch (err) {
+    log.error({ err }, 'Upload error');
+    if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
     try {
-      res.write(`data: ${JSON.stringify({ type: 'error', message: e.message || 'Upload error' })}\n\n`);
+      res.write('data: ' + JSON.stringify({ type: 'error', message: err.message }) + '\n\n');
       res.end();
-    } catch (writeErr) {
-      e.status = HTTPStatus.BAD_REQUEST;
-      return next(e);
+    } catch (e) {
+      err.status = HTTPStatus.BAD_REQUEST;
+      return next(err);
     }
   }
 }

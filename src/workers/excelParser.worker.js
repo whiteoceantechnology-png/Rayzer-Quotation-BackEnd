@@ -1,10 +1,13 @@
 /**
  * Excel Parser Worker Thread
  * Offloads CPU-intensive Excel parsing from main event loop
+ * Streams batches to main thread for parallel DB insertion
  */
 
 import { parentPort, workerData } from 'worker_threads';
 import Excel from 'exceljs';
+
+const BATCH_SIZE = 1000; // Larger batches for faster throughput
 
 function parseNumber(val) {
   if (val == null) return null;
@@ -35,9 +38,50 @@ function getCell(row, headers, name) {
   return cell.text?.trim?.() ?? cell.value ?? '';
 }
 
-async function parseExcel(buffer) {
+/**
+ * Extract embedded images from Excel worksheet
+ */
+function extractEmbeddedImages(workbook, worksheet) {
+  const imageMap = {};
+  
+  try {
+    const images = workbook.model?.media || [];
+    
+    if (worksheet.getImages && typeof worksheet.getImages === 'function') {
+      const wsImages = worksheet.getImages();
+      
+      wsImages.forEach((img) => {
+        try {
+          const imageId = img.imageId;
+          const imageData = images[imageId];
+          
+          if (imageData && imageData.buffer) {
+            const row = img.range?.tl?.nativeRow ?? img.range?.tl?.row;
+            if (row !== undefined) {
+              const rowNum = row + 1;
+              const extension = imageData.extension || 'png';
+              const mimeType = extension === 'jpg' || extension === 'jpeg' 
+                ? 'image/jpeg' 
+                : `image/${extension}`;
+              const base64 = imageData.buffer.toString('base64');
+              imageMap[rowNum] = `data:${mimeType};base64,${base64}`;
+            }
+          }
+        } catch (imgErr) {
+          // Skip
+        }
+      });
+    }
+  } catch (err) {
+    // Return empty
+  }
+  
+  return imageMap;
+}
+
+async function parseExcel(filePath) {
   const workbook = new Excel.Workbook();
-  await workbook.xlsx.load(buffer);
+  await workbook.xlsx.readFile(filePath);
   
   const sheet = workbook.getWorksheet('products') || workbook.worksheets[0];
   if (!sheet) {
@@ -50,23 +94,39 @@ async function parseExcel(buffer) {
     throw new Error('Missing required column: product');
   }
 
+  // Extract embedded images first
+  const embeddedImages = extractEmbeddedImages(workbook, sheet);
+  const embeddedImageCount = Object.keys(embeddedImages).length;
   const totalRows = sheet.rowCount - 1;
-  const products = [];
-  let skipped = 0;
 
-  // Parse all rows
+  // Send info about what we found
+  parentPort.postMessage({ 
+    type: 'info', 
+    total: totalRows,
+    images: embeddedImageCount
+  });
+
+  let batch = [];
+  let skipped = 0;
+  let batchNumber = 0;
+  let processed = 0;
+
+  // Stream batches to main thread
   for (let r = 2; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
     const productVal = clean(getCell(row, headers, 'product'));
     
     if (!productVal) {
       skipped++;
+      processed++;
       continue;
     }
 
-    const imageValue = clean(getCell(row, headers, 'image')) || null;
+    const cellImageValue = clean(getCell(row, headers, 'image')) || null;
+    const embeddedImage = embeddedImages[r] || null;
+    const imageValue = embeddedImage || cellImageValue;
 
-    products.push({
+    batch.push({
       product: productVal,
       color: clean(getCell(row, headers, 'color')),
       chipset: clean(getCell(row, headers, 'chipset')),
@@ -83,32 +143,47 @@ async function parseExcel(buffer) {
       image: imageValue,
     });
 
-    // Report progress every 1000 rows
-    if (products.length % 1000 === 0) {
-      parentPort.postMessage({
-        type: 'progress',
-        phase: 'parsing',
-        count: products.length,
-        total: totalRows
+    processed++;
+
+    // Send batch when full
+    if (batch.length >= BATCH_SIZE) {
+      parentPort.postMessage({ 
+        type: 'batch', 
+        data: batch,
+        batchNumber: ++batchNumber,
+        processed
       });
+      batch = [];
     }
   }
 
-  return { products, totalRows, skipped };
+  // Send remaining batch
+  if (batch.length > 0) {
+    parentPort.postMessage({ 
+      type: 'batch', 
+      data: batch,
+      batchNumber: ++batchNumber,
+      processed
+    });
+  }
+
+  return { totalRows, skipped, totalBatches: batchNumber };
 }
 
 // Main worker execution
 (async () => {
   try {
-    const { buffer } = workerData;
+    const { filePath } = workerData;
     
     parentPort.postMessage({ type: 'status', message: 'Parsing Excel file...' });
     
-    const result = await parseExcel(Buffer.from(buffer));
+    const result = await parseExcel(filePath);
     
     parentPort.postMessage({ 
       type: 'complete', 
-      data: result 
+      skipped: result.skipped,
+      totalBatches: result.totalBatches,
+      total: result.totalRows
     });
   } catch (error) {
     parentPort.postMessage({ 

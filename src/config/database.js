@@ -19,10 +19,17 @@ const sequelize = new Sequelize({
     underscored: true,
   },
   pool: {
-    max: 10,
-    min: 0,
-    acquire: 30000,
-    idle: 10000
+    max: 20,           // Increased for bulk operations
+    min: 2,            // Keep some connections warm
+    acquire: 60000,    // 60s to acquire connection (up from 30s)
+    idle: 30000,       // 30s idle before release
+    evict: 60000       // Check for idle connections every 60s
+  },
+  dialectOptions: {
+    connectTimeout: 60000,  // 60s connection timeout
+  },
+  retry: {
+    max: 3             // Retry failed queries up to 3 times
   }
 });
 

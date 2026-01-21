@@ -151,6 +151,35 @@ export async function list(req, res, next) {
     if (req.query.created_by && isAdminOrManager) {
       where.created_by = req.query.created_by;
     }
+    if (req.query.date) {
+      const inputDate = new Date(req.query.date);
+
+      // Start of the day
+      const startOfDay = new Date(inputDate);
+      startOfDay.setHours(0, 0, 0, 0);
+
+      // Start of next day
+      const startOfNextDay = new Date(startOfDay);
+      startOfNextDay.setDate(startOfNextDay.getDate() + 1);
+
+      where.created_at = {
+        [Op.gte]: startOfDay,
+        [Op.lt]: startOfNextDay
+      };
+    }
+
+    if(req.query.start_date && req.query.end_date) {
+      const startDate = new Date(req.query.start_date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(req.query.end_date);
+      endDate.setHours(23, 59, 59, 999);
+
+      where.created_at = {
+        [Op.gte]: startDate,
+        [Op.lt]: endDate
+        // [Op.between]: [startDate, endDate]
+      };
+    }
 
     const { count, rows: bills } = await Bill.findAndCountAll({
       where,

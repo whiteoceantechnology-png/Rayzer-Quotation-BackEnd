@@ -22,8 +22,17 @@ export const set = async (key, value, ttlSeconds = 3600) => {
     }
 };
 
+export const clear = () => {
+        try {
+            cache.flushAll();
+        } catch (error) {
+            logger.error({ err: error }, 'Cache Clear Error');
+        }
+    };
+
 export default {
     get,
     set,
+    clear,
     client: cache,
 };

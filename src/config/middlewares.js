@@ -128,9 +128,10 @@ export default app => {
       // Skip rate limiting for health checks
       return ['/health', '/status', '/api/health'].includes(req.path);
     },
+    validate: false, // Disable all validation
     keyGenerator: (req) => {
       // Use CF-Connecting-IP if behind Cloudflare, otherwise use IP
-      return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+      return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0] || req.ip || 'unknown';
     },
   });
 
@@ -141,8 +142,9 @@ export default app => {
     message: { status: 0, message: 'Too many login attempts, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
+    validate: false,
     keyGenerator: (req) => {
-      return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+      return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0] || req.ip || 'unknown';
     },
   });
 

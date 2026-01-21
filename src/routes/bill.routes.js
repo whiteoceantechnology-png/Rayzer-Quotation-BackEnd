@@ -90,7 +90,7 @@ router.post('/', authJwt, BillController.create);
  *           type: string
  *         description: Filter by Customer ID
  *       - in: query
- *         name: sales_staff_id
+ *         name: created_by
  *         schema:
  *           type: string
  *         description: Filter by Sales Staff (User) ID

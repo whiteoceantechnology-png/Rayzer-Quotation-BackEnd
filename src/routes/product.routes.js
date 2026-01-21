@@ -178,7 +178,7 @@ router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), uploadExcelFile.single
  *       201:
  *         description: Product created
  */
-router.post('/', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('imageFile'), createProduct);
+router.post('/', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('image'), createProduct);
 
 // Cascading selection routes (specific routes before parameterized routes)
 /**
@@ -298,7 +298,7 @@ router.get('/:id', authJwt, getById);
  * @swagger
  * /products/{id}:
  *   patch:
- *     summary: Update product (Admin Only)
+ *     summary: Update product (Admin and Manager Only)
  *     tags: [Products]
  *     security:
  *       - bearerAuth: []
@@ -341,7 +341,7 @@ router.get('/:id', authJwt, getById);
  *       200:
  *         description: Product updated
  */
-router.patch('/:id', authJwt, checkRole([ROLES.ADMIN]), uploadImage.single('imageFile'), updateProduct);
+router.patch('/:id', authJwt, checkRole([ROLES.ADMIN, ROLES.MANAGER]), uploadImage.single('imageFile'), updateProduct);
 
 /**
  * @swagger

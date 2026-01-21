@@ -120,7 +120,7 @@ export async function updateProduct(req, res, next) {
     }
 
     // Invalidate cache as product data changed
-    CacheService.clear();
+    // CacheService.clear();
 
     return res.status(HTTPStatus.OK).json({
       status: 1,
