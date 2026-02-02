@@ -1,5 +1,5 @@
 import HTTPStatus from 'http-status';
-import { Op } from 'sequelize';
+import { Op, where } from 'sequelize';
 import Product from '../models/product.model.js';
 
 import logger from '../utils/logger.js';
@@ -294,9 +294,12 @@ export async function getProducts(req, res, next) {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
-    const { type } = req.query;
+    const { type, search } = req.query;
     const where = {};
     if (type) where.type = type;
+    if(search){
+      where.product = { [Op.like]: `%${req.query.search}%` };
+    }
 
     const allProducts = await getDistinctValues('product', where);
     const sortedProducts = allProducts.sort();
@@ -324,8 +327,11 @@ export async function getTypes(req, res, next) {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
-
-    const allTypes = await getDistinctValues('type');
+    const where = {};
+    if(req.query.search){
+      where.type = { [Op.like]: `%${req.query.search}%` };
+    }
+    const allTypes = await getDistinctValues('type', where);
     const sortedTypes = allTypes.sort();
 
     const total = sortedTypes.length;
@@ -351,7 +357,7 @@ export async function getTypes(req, res, next) {
 
 export async function getBeamAngles(req, res, next) {
   try {
-    let { product, type } = req.query;
+    let { product, type, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
 
@@ -364,7 +370,7 @@ export async function getBeamAngles(req, res, next) {
 
     const where = { product };
     if (type) where.type = type;
-
+    if (search) where.beam_angle = { [Op.like]: `%${search}%` };
     const beamAngles = await getDistinctValues('beam_angle', where);
     console.log('Distinct beam angles:', beamAngles);
     const cacheKey = generateCacheKey('products:selection:beamangles', req.query);
@@ -401,7 +407,7 @@ export async function getBeamAngles(req, res, next) {
 
 export async function getColors(req, res, next) {
   try {
-    let { product, type, beam_angle } = req.query;
+    let { product, type, beam_angle, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
     const skip = (page - 1) * limit;
@@ -416,6 +422,7 @@ export async function getColors(req, res, next) {
     const where = { product };
     if (type) where.type = type;
     if (beam_angle) where.beam_angle = beam_angle;
+    if (search) where.color = { [Op.like]: `%${search}%` };
 
     const allColors = await getDistinctValues('color', where);
     const sortedColors = allColors.sort();
@@ -451,7 +458,7 @@ export async function getColors(req, res, next) {
 
 export async function getChipsets(req, res, next) {
   try {
-    let { product, type, beam_angle, color } = req.query;
+    let { product, type, beam_angle, color, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
 
@@ -465,6 +472,7 @@ export async function getChipsets(req, res, next) {
     const where = { product, color };
     if (type) where.type = type;
     if (beam_angle) where.beam_angle = beam_angle;
+    if (search) where.chipset = { [Op.like]: `%${search}%` };
 
     const allChipsets = await getDistinctValues('chipset', where);
     const sortedChipsets = allChipsets.sort();
@@ -500,7 +508,7 @@ export async function getChipsets(req, res, next) {
 
 export async function getColorTemperatures(req, res, next) {
   try {
-    let { product, type, beam_angle, color, chipset } = req.query;
+    let { product, type, beam_angle, color, chipset, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
 
@@ -514,7 +522,7 @@ export async function getColorTemperatures(req, res, next) {
     const where = { product, color, chipset };
     if (type) where.type = type;
     if (beam_angle) where.beam_angle = beam_angle;
-
+    if (search) where.ct = { [Op.like]: `%${search}%` };
     const cts = await getDistinctValues('ct', where);
 
     const cacheKey = generateCacheKey('products:selection:ct', req.query);
@@ -552,7 +560,7 @@ export async function getColorTemperatures(req, res, next) {
 
 export async function getCRI(req, res, next) {
   try {
-    let { product, type, beam_angle, color, chipset, ct } = req.query;
+    let { product, type, beam_angle, color, chipset, ct, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
 
@@ -564,6 +572,7 @@ export async function getCRI(req, res, next) {
     }
 
     const where = { product, color, chipset };
+    if (search) where.cri = { [Op.like]: `%${search}%` };
     if (ct) where.ct = ct;
     if (type) where.type = type;
     if (beam_angle) where.beam_angle = beam_angle;
@@ -604,7 +613,7 @@ export async function getCRI(req, res, next) {
 export async function getDrivers(req, res, next) {
   try {
     const requestLogger = req.log || logger;
-    let { product, type, beam_angle, color, chipset, ct, cri } = req.query;
+    let { product, type, beam_angle, color, chipset, ct, cri, search } = req.query;
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10), 1), 200);
 
@@ -618,7 +627,8 @@ export async function getDrivers(req, res, next) {
     const where = { product, color, chipset, ct, cri };
     if (type) where.type = type;
     if (beam_angle) where.beam_angle = beam_angle;
-
+    if (search) where.drive = { [Op.like]: `%${search}%` };
+    
     requestLogger.debug({ where }, 'Fetching drivers');
     const drivers = await Product.findAll({
       where,

@@ -75,6 +75,7 @@ export async function create(req, res, next) {
         room_name: item.room_name || 'N/A',
         quantity: item.quantity,
         unit_price: product.mrp,
+        dlp_total: product.dlp * item.quantity ?? 0,
         total_price: totalPrice,
       });
     }
@@ -95,20 +96,21 @@ export async function create(req, res, next) {
     }
 
     const taxRate = 18;
-    const taxAmount = (subtotal * taxRate) / 100;
     const discount = req.body.discount || 0;
-    const totalAmount = subtotal + taxAmount - discount;
+    const totalAmount = subtotal - discount;
+    const taxAmount = (totalAmount * taxRate) / 100;
 
     const bill = await Bill.create({
       customer_id: customer.id,
       subtotal,
       tax_rate: taxRate,
       tax_amount: taxAmount,
-      discount,
+      discount: discount,
       total_amount: totalAmount,
       notes: req.body.notes,
       terms_conditions: req.body.terms_conditions,
       created_by: req.user.id,
+      dlp_total: items.reduce((acc, curr) => acc + curr.dlp_total, 0),
       items: items // Nested creation
     }, {
       include: [{ model: BillItem, as: 'items' }],
@@ -149,7 +151,7 @@ export async function list(req, res, next) {
     if (req.query.customer_id) where.customer_id = req.query.customer_id;
     // Allow Admin/Manager to filter by creator
     if (req.query.created_by && isAdminOrManager) {
-      where.created_by = req.query.created_by;
+      where.created_by = req.query.created_by || req.query.sales_staff;
     }
     if (req.query.date) {
       const inputDate = new Date(req.query.date);
@@ -180,7 +182,7 @@ export async function list(req, res, next) {
         // [Op.between]: [startDate, endDate]
       };
     }
-
+    console.log(where);
     const { count, rows: bills } = await Bill.findAndCountAll({
       where,
       order: [['created_at', 'DESC']],
@@ -190,7 +192,7 @@ export async function list(req, res, next) {
         {
           model: Customer,
           as: 'customer',
-          attributes: ['name', 'mobile_number', 'company_name', 'location']
+          attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
         },
         {
           model: BillItem,
@@ -258,7 +260,7 @@ export async function getById(req, res, next) {
         {
           model: Customer,
           as: 'customer',
-          attributes: ['name', 'mobile_number', 'company_name', 'location']
+          attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
         },
         {
           model: BillItem,

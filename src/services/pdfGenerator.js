@@ -25,7 +25,7 @@ export function generateBillPDF(billData, outputPath) {
     try {
       // --- Transform input to expected format ---
       const customer_details = billData.customer_details || billData.customer_id || {};
-      
+
       // Transform sections if not present - GROUP BY ROOM NAME
       let sections = billData.sections;
       if (!sections) {
@@ -37,17 +37,18 @@ export function generateBillPDF(billData, outputPath) {
             driver_details: String(p.driver_details || p.drive_details || ''),
             chipset: String(p.chipset || ''),
             power_factor: String(p.power_factor || ''),
-            wattage: String(p.wattage || p.watt || ''),
+            // wattage: String(p.wattage || p.watt || ''),
             ct: String(p.ct || ''),
             color: String(p.color || ''),
             pcs: item.quantity || 0,
             rate: item.unit_price || 0,
             amount: item.total_price || 0,
             image: String(p.image || ''),
+            warranty: String(p.warranty || "NA"),
             room_name: String(item.room_name || 'General')
           };
         });
-        
+
         // Group items by room_name
         const roomGroups = {};
         items.forEach(item => {
@@ -57,7 +58,7 @@ export function generateBillPDF(billData, outputPath) {
           }
           roomGroups[roomName].push(item);
         });
-        
+
         // Convert to sections array, sorted by room name
         sections = Object.keys(roomGroups)
           .sort((a, b) => {
@@ -81,14 +82,14 @@ export function generateBillPDF(billData, outputPath) {
       const fontsDir = path.join(process.cwd(), 'uploads', 'fonts');
       const notoRegularPath = path.join(fontsDir, 'NotoSans-Regular.ttf');
       const notoBoldPath = path.join(fontsDir, 'NotoSans-Bold.ttf');
-      
+
       if (fs.existsSync(notoRegularPath)) {
         doc.registerFont('NotoSans', notoRegularPath);
       }
       if (fs.existsSync(notoBoldPath)) {
         doc.registerFont('NotoSans-Bold', notoBoldPath);
       }
-      
+
       // Check if custom fonts are available
       const hasCustomFonts = fs.existsSync(notoRegularPath) && fs.existsSync(notoBoldPath);
       const regularFont = hasCustomFonts ? 'NotoSans' : 'Helvetica';
@@ -98,13 +99,11 @@ export function generateBillPDF(billData, outputPath) {
       const pageHeight = doc.page.height;
       const margin = 20;
 
-      // Calculate total table width to fit page
-      const totalTableWidth = pageWidth - 2 * margin;
-
       // Column widths for the table (adjusted to fit page width)
-      // Total should equal totalTableWidth (~802 for landscape A4)
-      const colWidths = [30, 65, 35, 75, 65, 55, 55, 50, 45, 35, 65, 70, 60];
-      const headers = ['No', 'Product', 'CRI', 'Driver Details', 'Chipset', 'Power Factor', 'Wattage', 'CT', 'Color', 'Pcs', 'Rate', 'Amount', 'Image'];
+      // 13 columns: No, Product, CRI, Driver Details, Chipset, Power Factor, Warranty, CT, Color, Pcs, Rate, Amount, Image
+      // Total width ~785 for landscape A4 (page width 842 - margins 40 = 802 available)
+      const colWidths = [30, 70, 40, 80, 70, 55, 55, 50, 50, 40, 70, 75, 100];
+      const headers = ['No', 'Product', 'CRI', 'Driver Details', 'Chipset', 'Power Factor', 'Warranty', 'CT', 'Color', 'Pcs', 'Rate', 'Amount', 'Image'];
 
       // Helper function to draw a cell with border (text stays within bounds)
       function drawCell(x, y, w, h, text, options = {}) {
@@ -124,31 +123,31 @@ export function generateBillPDF(billData, outputPath) {
           const padding = 2;
           const maxWidth = w - (padding * 2);
           const maxHeight = h - (padding * 2);
-          
+
           doc.save(); // Save graphics state
-          
+
           // Create clipping region to prevent overflow
           doc.rect(x + padding, y + padding, maxWidth, maxHeight).clip();
-          
+
           doc.fillColor(textColor)
             .font(bold ? boldFont : regularFont)
             .fontSize(fontSize);
-          
+
           // Calculate text height for vertical centering
           const textHeight = doc.heightOfString(textStr, { width: maxWidth, lineGap: 1 });
           const lines = Math.ceil(textHeight / (fontSize + 1));
           const actualHeight = Math.min(textHeight, maxHeight);
           const yOffset = Math.max(padding, (h - actualHeight) / 2);
-          
-          doc.text(textStr, x + padding, y + yOffset, { 
-            width: maxWidth, 
+
+          doc.text(textStr, x + padding, y + yOffset, {
+            width: maxWidth,
             height: maxHeight,
-            align, 
+            align,
             lineBreak: true,
             lineGap: 1,
             ellipsis: true // Add ellipsis if text is too long
           });
-          
+
           doc.restore(); // Restore graphics state (removes clipping)
         }
       }
@@ -184,12 +183,12 @@ export function generateBillPDF(billData, outputPath) {
       }
 
       let yPos = margin;
-      
+
       // Track content boundaries for outer border
       const actualTableWidth = colWidths.reduce((a, b) => a + b, 0);
       const contentStartY = yPos;
       let contentEndY = yPos;
-      
+
       // Helper to draw outer border on current page
       function drawOuterBorder(startY, endY) {
         doc.strokeColor(TEAL).lineWidth(2)
@@ -261,7 +260,7 @@ export function generateBillPDF(billData, outputPath) {
 
         // Section/Room title row - prominent styling
         const actualTableWidth = colWidths.reduce((a, b) => a + b, 0);
-        
+
         // Room name header with light teal-blue background
         doc.fillColor(ROOM_BG).rect(margin, y, actualTableWidth, sectionTitleHeight).fill();
         doc.strokeColor(TEAL).lineWidth(0.5).rect(margin, y, actualTableWidth, sectionTitleHeight).stroke();
@@ -299,10 +298,11 @@ export function generateBillPDF(billData, outputPath) {
           drawCell(x, y, colWidths[0], rowHeight, idx + 1, { textColor: TEAL, fontSize: 8 }); x += colWidths[0];
           drawCell(x, y, colWidths[1], rowHeight, item.product_name || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[1];
           drawCell(x, y, colWidths[2], rowHeight, item.cri || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[2];
-          drawCell(x, y, colWidths[3], rowHeight, item.driver_details || '', { textColor: TEAL, fontSize: 6 }); x += colWidths[3];
+          drawCell(x, y, colWidths[3], rowHeight, item.driver_details || '', { textColor: TEAL, fontSize: 6, align: 'left' }); x += colWidths[3];
           drawCell(x, y, colWidths[4], rowHeight, item.chipset || '', { textColor: TEAL, fontSize: 6 }); x += colWidths[4];
           drawCell(x, y, colWidths[5], rowHeight, item.power_factor || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[5];
-          drawCell(x, y, colWidths[6], rowHeight, item.wattage || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[6];
+          // drawCell(x, y, colWidths[6], rowHeight, item.wattage || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[6];
+          drawCell(x, y, colWidths[6], rowHeight, item.warranty || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[6];
           drawCell(x, y, colWidths[7], rowHeight, item.ct || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[7];
           drawCell(x, y, colWidths[8], rowHeight, item.color || '', { textColor: TEAL, fontSize: 7 }); x += colWidths[8];
           drawCell(x, y, colWidths[9], rowHeight, item.pcs || '', { textColor: TEAL, fontSize: 8 }); x += colWidths[9];
@@ -371,11 +371,11 @@ export function generateBillPDF(billData, outputPath) {
       drawCell(totalsX, yPos, totalsWidth, totalsRowHeight, 'A/C', { fill: LIGHT_TEAL, textColor: TEAL, bold: true, align: 'center' });
       drawCell(totalsX + totalsWidth, yPos, totalsValueWidth, totalsRowHeight, `₹${safeFixed(billData.account)}`, { textColor: TEAL, align: 'center' });
       yPos += totalsRowHeight;
-      
+
       // Draw outer border wrapping header, tables, and totals
       contentEndY = yPos;
       drawOuterBorder(contentStartY, contentEndY);
-      
+
       // ==================== TERMS AND CONDITIONS ====================
       // Start new page for terms if needed
       doc.addPage();
@@ -384,10 +384,10 @@ export function generateBillPDF(billData, outputPath) {
       // Terms box - use wider width to fit content
       const termsBoxWidth = actualTableWidth; // Use same width as table
       const termsBoxHeight = 240;
-      
+
       // Draw terms box border
       doc.strokeColor(BLACK).lineWidth(1).rect(margin, yPos, termsBoxWidth, termsBoxHeight).stroke();
-      
+
       const termsContentWidth = termsBoxWidth - 30; // Padding for text
       const termsStartY = yPos;
       yPos += 15;
@@ -413,19 +413,19 @@ export function generateBillPDF(billData, outputPath) {
           .font(term.bold ? boldFont : regularFont)
           .fontSize(9);
 
-        const textOptions = { 
-          width: termsContentWidth, 
+        const textOptions = {
+          width: termsContentWidth,
           lineBreak: true,
           lineGap: 2
         };
-        
+
         if (term.underline) {
           textOptions.underline = true;
         }
-        
+
         // Calculate height of this term for proper spacing
         const textHeight = doc.heightOfString(term.text, textOptions);
-        
+
         doc.text(term.text, margin + 15, yPos, textOptions);
         yPos += textHeight + 5;
       });

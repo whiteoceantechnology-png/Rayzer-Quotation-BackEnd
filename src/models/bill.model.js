@@ -11,6 +11,7 @@ BillItem.init({
   quantity: { type: Sequelize.INTEGER, allowNull: false },
   unit_price: { type: Sequelize.FLOAT, allowNull: false },
   total_price: { type: Sequelize.FLOAT, allowNull: false },
+  dlp_total: { type: Sequelize.FLOAT, allowNull: false, defaultValue: 0 },
   // product_id foreign key defined by association
   // bill_id foreign key defined by association
 }, {
@@ -39,6 +40,7 @@ Bill.init({
   total_amount: { type: Sequelize.FLOAT, allowNull: false },
   notes: Sequelize.TEXT,
   terms_conditions: Sequelize.TEXT,
+  dlp_total: { type: Sequelize.FLOAT, allowNull: false, defaultValue: 0 },
   status: {
     type: Sequelize.ENUM('draft', 'sent', 'paid', 'cancelled'),
     defaultValue: 'draft'

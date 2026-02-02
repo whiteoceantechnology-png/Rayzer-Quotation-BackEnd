@@ -55,31 +55,38 @@ function extractImages(workbook, worksheet) {
           const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/' + ext;
           imageMap[rowNum] = 'data:' + mime + ';base64,' + data.buffer.toString('base64');
         }
-      } catch (e) {}
+      } catch (e) { }
     }
-  } catch (e) {}
+  } catch (e) { }
   return imageMap;
 }
 
 /**
- * Insert batch - splits into smaller chunks if images present
+ * Insert/Update batch - splits into smaller chunks if images present
+ * Uses UPSERT (INSERT ON DUPLICATE KEY UPDATE) to update existing records
  * MariaDB max_allowed_packet is typically 16MB, base64 images can be large
  */
 async function insertBatchSQL(sequelize, batch, log) {
-  if (!batch.length) return 0;
-  
+  if (!batch.length) return { inserted: 0, updated: 0 };
+
   // Check if batch has images - if so, use smaller chunks
   const hasImages = batch.some(r => r.image && r.image.length > 1000);
   const chunkSize = hasImages ? 20 : 500; // Small chunks for images
-  
+
   const columns = [
-    'product', 'color', 'chipset', 'type', 'beam_angle', 'ct', 'cri',
+    'id', 'product', 'color', 'chipset', 'type', 'beam_angle', 'ct', 'cri',
     'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image',
     'created_at', 'updated_at'
   ];
-  
+
+  // Columns to update on duplicate (exclude id and created_at)
+  const updateColumns = [
+    'product', 'color', 'chipset', 'type', 'beam_angle', 'ct', 'cri',
+    'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image'
+  ];
+
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  
+
   const escape = (v) => {
     if (v === null || v === undefined || v === '') return 'NULL';
     if (typeof v === 'number') return v;
@@ -87,33 +94,44 @@ async function insertBatchSQL(sequelize, batch, log) {
   };
 
   let totalInserted = 0;
+  let totalUpdated = 0;
+
+  // Build ON DUPLICATE KEY UPDATE clause
+  const updateClause = updateColumns.map(col => `${col} = VALUES(${col})`).join(', ') + `, updated_at = '${now}'`;
 
   // Process in chunks
   for (let i = 0; i < batch.length; i += chunkSize) {
     const chunk = batch.slice(i, i + chunkSize);
-    
+
     const values = chunk.map(r => '(' + [
-      r.product, r.color, r.chipset, r.type, r.beam_angle, r.ct, r.cri,
+      r.id || null, r.product, r.color, r.chipset, r.type, r.beam_angle, r.ct, r.cri,
       r.drive, r.power_factor, r.drive_details, r.warranty, r.dlp, r.mrp, r.image,
       now, now
     ].map(escape).join(',') + ')').join(',');
 
-    const sql = 'INSERT IGNORE INTO products (' + columns.join(',') + ') VALUES ' + values;
+    const sql = 'INSERT INTO products (' + columns.join(',') + ') VALUES ' + values +
+      ' ON DUPLICATE KEY UPDATE ' + updateClause;
 
     try {
-      await sequelize.query(sql, { type: sequelize.QueryTypes.INSERT, logging: false });
-      totalInserted += chunk.length;
+      const [result] = await sequelize.query(sql, { type: sequelize.QueryTypes.INSERT, logging: false });
+      // affectedRows: inserts count as 1, updates count as 2
+      const affected = result?.affectedRows || chunk.length;
+      // Estimate: if affectedRows > chunk.length, some were updates
+      const updates = Math.max(0, affected - chunk.length);
+      totalInserted += (chunk.length - updates);
+      totalUpdated += updates;
     } catch (err) {
       // If chunk still too big, try one by one
       if (err.message.includes('max_allowed_packet')) {
         for (const row of chunk) {
           try {
             const singleValue = '(' + [
-              row.product, row.color, row.chipset, row.type, row.beam_angle, row.ct, row.cri,
+              row.id || null, row.product, row.color, row.chipset, row.type, row.beam_angle, row.ct, row.cri,
               row.drive, row.power_factor, row.drive_details, row.warranty, row.dlp, row.mrp, row.image,
               now, now
             ].map(escape).join(',') + ')';
-            const singleSql = 'INSERT IGNORE INTO products (' + columns.join(',') + ') VALUES ' + singleValue;
+            const singleSql = 'INSERT INTO products (' + columns.join(',') + ') VALUES ' + singleValue +
+              ' ON DUPLICATE KEY UPDATE ' + updateClause;
             await sequelize.query(singleSql, { type: sequelize.QueryTypes.INSERT, logging: false });
             totalInserted++;
           } catch (singleErr) {
@@ -126,7 +144,7 @@ async function insertBatchSQL(sequelize, batch, log) {
     }
   }
 
-  return totalInserted;
+  return { inserted: totalInserted, updated: totalUpdated };
 }
 
 export async function uploadExcel(req, res, next) {
@@ -151,7 +169,7 @@ export async function uploadExcel(req, res, next) {
     res.flushHeaders();
 
     const send = (data) => {
-      try { res.write('data: ' + JSON.stringify(data) + '\n\n'); } catch (e) {}
+      try { res.write('data: ' + JSON.stringify(data) + '\n\n'); } catch (e) { }
     };
 
     send({ type: 'start', message: 'Reading Excel file...' });
@@ -162,14 +180,14 @@ export async function uploadExcel(req, res, next) {
     const sheet = workbook.getWorksheet('products') || workbook.worksheets[0];
     if (!sheet) {
       send({ type: 'error', message: 'No worksheet found' });
-      if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
+      if (filePath) try { fs.unlinkSync(filePath); } catch (e) { }
       return res.end();
     }
 
     const headers = getHeaderMap(sheet.getRow(1));
     if (!headers['product']) {
       send({ type: 'error', message: 'Missing required column: product' });
-      if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
+      if (filePath) try { fs.unlinkSync(filePath); } catch (e) { }
       return res.end();
     }
 
@@ -183,6 +201,7 @@ export async function uploadExcel(req, res, next) {
     let batch = [];
     let processed = 0;
     let inserted = 0;
+    let updated = 0;
     let skipped = 0;
     let errors = 0;
     let lastPercent = 0;
@@ -199,7 +218,11 @@ export async function uploadExcel(req, res, next) {
         continue;
       }
 
+      // Get ID if present (for updating existing records)
+      const productId = parseNumber(getCellValue(row, headers, 'id'));
+
       batch.push({
+        id: productId,
         product: productName,
         color: getCellValue(row, headers, 'color'),
         chipset: getCellValue(row, headers, 'chipset'),
@@ -218,45 +241,45 @@ export async function uploadExcel(req, res, next) {
       processed++;
 
       if (batch.length >= BATCH_SIZE) {
-        const count = await insertBatchSQL(sequelize, batch, log);
-        inserted += count;
-        if (count < batch.length) errors += (batch.length - count);
+        const result = await insertBatchSQL(sequelize, batch, log);
+        inserted += result.inserted;
+        updated += result.updated;
         batch = [];
 
         const percent = Math.floor((processed / totalRows) * 100);
         if (percent >= lastPercent + PROGRESS_INTERVAL) {
           lastPercent = percent;
-          send({ type: 'progress', percent, processed, total: totalRows, inserted });
+          send({ type: 'progress', percent, processed, total: totalRows, inserted, updated });
         }
       }
     }
 
     // Final batch
     if (batch.length > 0) {
-      const count = await insertBatchSQL(sequelize, batch, log);
-      inserted += count;
-      if (count < batch.length) errors += (batch.length - count);
+      const result = await insertBatchSQL(sequelize, batch, log);
+      inserted += result.inserted;
+      updated += result.updated;
     }
 
     // Cleanup
-    if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
-    try { CacheService.clear(); } catch (e) {}
+    if (filePath) try { fs.unlinkSync(filePath); } catch (e) { }
+    try { CacheService.clear(); } catch (e) { }
 
     const duration = Date.now() - startTime;
-    log.info({ processed, inserted, skipped, errors, duration }, 'Upload complete');
+    log.info({ processed, inserted, updated, skipped, errors, duration }, 'Upload complete');
 
     send({
       type: 'complete',
       status: 1,
       message: 'Upload complete',
-      data: { processed, inserted, skipped, errors, total_rows: totalRows, duration_ms: duration }
+      data: { processed, inserted, updated, skipped, errors, total_rows: totalRows, duration_ms: duration }
     });
 
     return res.end();
 
   } catch (err) {
     log.error({ err }, 'Upload error');
-    if (filePath) try { fs.unlinkSync(filePath); } catch (e) {}
+    if (filePath) try { fs.unlinkSync(filePath); } catch (e) { }
     try {
       res.write('data: ' + JSON.stringify({ type: 'error', message: err.message }) + '\n\n');
       res.end();
@@ -264,5 +287,106 @@ export async function uploadExcel(req, res, next) {
       err.status = HTTPStatus.BAD_REQUEST;
       return next(err);
     }
+  }
+}
+
+/**
+ * Export products to Excel file for editing
+ * Downloads all products with ID column for re-upload updates
+ */
+export async function exportExcel(req, res, next) {
+  const log = req.log || logger;
+
+  try {
+    log.info('Starting product export to Excel');
+
+    // Fetch all products (exclude large image data for export)
+    const products = await Product.findAll({
+      attributes: ['id', 'product', 'color', 'chipset', 'type', 'beam_angle', 'ct', 'cri',
+        'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp'],
+      order: [['id', 'ASC']],
+      raw: true
+    });
+
+    if (!products.length) {
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'No products found to export',
+        status: 0
+      });
+    }
+
+    // Create workbook and worksheet
+    const workbook = new Excel.Workbook();
+    workbook.creator = 'Rayzer Lights';
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet('products', {
+      properties: { defaultColWidth: 15 },
+      views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }] // Freeze first column (ID) and first row (header)
+    });
+
+    // Define columns - ID first for updates, then all product fields
+    worksheet.columns = [
+      { header: 'ID', key: 'id', width: 10 },
+      { header: 'Product', key: 'product', width: 30 },
+      { header: 'Color', key: 'color', width: 15 },
+      { header: 'Chipset', key: 'chipset', width: 20 },
+      { header: 'Type', key: 'type', width: 15 },
+      { header: 'Beam_Angle', key: 'beam_angle', width: 12 },
+      { header: 'CT', key: 'ct', width: 10 },
+      { header: 'CRI', key: 'cri', width: 10 },
+      { header: 'Drive', key: 'drive', width: 15 },
+      { header: 'Power_Factor', key: 'power_factor', width: 12 },
+      { header: 'Drive_Details', key: 'drive_details', width: 25 },
+      { header: 'Warranty', key: 'warranty', width: 15 },
+      { header: 'DLP', key: 'dlp', width: 12 },
+      { header: 'MRP', key: 'mrp', width: 12 },
+    ];
+
+    // Style header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE8F4F4' }
+    };
+
+    // Add product data rows
+    products.forEach(product => {
+      worksheet.addRow({
+        id: product.id,
+        product: product.product || '',
+        color: product.color || '',
+        chipset: product.chipset || '',
+        type: product.type || '',
+        beam_angle: product.beam_angle || '',
+        ct: product.ct || '',
+        cri: product.cri || '',
+        drive: product.drive || '',
+        power_factor: product.power_factor || '',
+        drive_details: product.drive_details || '',
+        warranty: product.warranty || '',
+        dlp: product.dlp || '',
+        mrp: product.mrp || ''
+      });
+    });
+
+    // Generate buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    // Set response headers for file download
+    const filename = `products_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+
+    log.info({ count: products.length, filename, size: buffer.length }, 'Product export complete');
+
+    return res.send(buffer);
+
+  } catch (err) {
+    log.error({ err }, 'Export error');
+    err.status = HTTPStatus.INTERNAL_SERVER_ERROR;
+    return next(err);
   }
 }

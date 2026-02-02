@@ -18,7 +18,7 @@ import {
   deleteProduct,
   listAll
 } from '../controllers/product.controller.js';
-import { uploadExcel } from '../controllers/productUpload.controller.js';
+import { uploadExcel, exportExcel } from '../controllers/productUpload.controller.js';
 import { checkRole } from '../middlewares/rbac.middleware.js';
 import constants from '../config/constants.js';
 
@@ -130,6 +130,32 @@ router.get('/all', authJwt, checkRole([ROLES.ADMIN]), listAll);
  *         description: Admin role required
  */
 router.post('/upload', authJwt, checkRole([ROLES.ADMIN]), uploadExcelFile.single('file'), uploadExcel);
+
+/**
+ * @swagger
+ * /products/export:
+ *   get:
+ *     summary: Export all products to Excel
+ *     description: Downloads all products as an Excel file for editing. Re-upload with the same ID to update records.
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Excel file download
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Admin role required
+ *       404:
+ *         description: No products found
+ */
+router.get('/export', authJwt, checkRole([ROLES.ADMIN]), exportExcel);
 
 /**
  * @swagger
