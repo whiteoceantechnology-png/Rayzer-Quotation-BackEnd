@@ -1,5 +1,5 @@
 import HTTPStatus from 'http-status';
-import { Op, where } from 'sequelize';
+import { Op } from 'sequelize';
 import Product from '../models/product.model.js';
 
 import logger from '../utils/logger.js';
@@ -47,6 +47,74 @@ function buildQuery(q) {
   }
 
   return where;
+}
+
+function buildTokenizedSearch(tokens) {
+  const searchableFields = [
+    'product',
+    'color',
+    'chipset',
+    'type',
+    'beam_angle',
+    'ct',
+    'cri',
+    'drive',
+    'power_factor',
+    'drive_details',
+    'warranty',
+  ];
+
+  return {
+    [Op.and]: tokens.map(token => ({
+      [Op.or]: searchableFields.map(field => ({
+        [field]: { [Op.like]: `%${token}%` },
+      })),
+    })),
+  };
+}
+
+function buildListWhere(query, { useFullText = true } = {}) {
+  const where = {};
+  const { product, color, chipset, ct, cri, drive, type, beam_angle, search } = query;
+
+  if (product) where.product = product;
+  if (color) where.color = color;
+  if (chipset) where.chipset = chipset;
+  if (ct) where.ct = ct;
+  if (cri) where.cri = cri;
+  if (drive) where.drive = drive;
+  if (type) where.type = type;
+  if (beam_angle) where.beam_angle = beam_angle;
+
+  const tokens = String(search || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!tokens.length) {
+    return where;
+  }
+
+  const fullTextTokens = tokens
+    .map(token => token.replace(/[^\p{L}\p{N}_-]/gu, ''))
+    .filter(token => token.length >= 3);
+
+  if (useFullText && fullTextTokens.length) {
+    const booleanModeQuery = fullTextTokens.map(token => `+${token}*`).join(' ');
+    return {
+      ...where,
+      [Op.and]: [
+        Product.sequelize.literal(
+          `MATCH (product, color, chipset, ct, cri, drive, warranty) AGAINST (${Product.sequelize.escape(booleanModeQuery)} IN BOOLEAN MODE)`
+        ),
+      ],
+    };
+  }
+
+  return {
+    ...where,
+    ...buildTokenizedSearch(tokens),
+  };
 }
 
 export async function createProduct(req, res, next) {
@@ -175,19 +243,57 @@ export async function list(req, res, next) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 200);
     const offset = (page - 1) * limit;
 
-    const where = buildQuery(req.query);
+    const cacheKey = generateCacheKey('products:list', { ...req.query, page, limit });
+    const cachedResult = await CacheService.get(cacheKey);
+    if (cachedResult) {
+      return res.status(HTTPStatus.OK).json({
+        ...cachedResult,
+        message: 'Products fetched (cached)',
+      });
+    }
 
-    const { count, rows: items } = await Product.findAndCountAll({
-      where,
-      order: [['created_at', 'DESC']],
-      offset,
-      limit,
-      attributes: [
-        'id', 'product', 'color', 'chipset', 'type', 'beam_angle',
-        'ct', 'cri', 'drive', 'power_factor', 'drive_details',
-        'warranty', 'dlp', 'mrp', 'image', 'created_at'
-      ]
-    });
+    const listAttributes = [
+      'id', 'product', 'color', 'chipset', 'type', 'beam_angle',
+      'ct', 'cri', 'drive', 'power_factor', 'drive_details',
+      'warranty', 'dlp', 'mrp', 'image', 'created_at'
+    ];
+
+    let where = buildListWhere(req.query);
+    let count;
+    let items;
+
+    try {
+      [count, items] = await Promise.all([
+        Product.count({ where }),
+        Product.findAll({
+          where,
+          order: [['created_at', 'DESC']],
+          offset,
+          limit,
+          attributes: listAttributes,
+        }),
+      ]);
+    } catch (searchError) {
+      const shouldFallback =
+        req.query.search &&
+        /match|fulltext|against/i.test(searchError?.message || '');
+
+      if (!shouldFallback) {
+        throw searchError;
+      }
+
+      where = buildListWhere(req.query, { useFullText: false });
+      [count, items] = await Promise.all([
+        Product.count({ where }),
+        Product.findAll({
+          where,
+          order: [['created_at', 'DESC']],
+          offset,
+          limit,
+          attributes: listAttributes,
+        }),
+      ]);
+    }
 
     const transformedItems = items.map(item => {
       const plain = item.toJSON();
@@ -206,17 +312,21 @@ export async function list(req, res, next) {
       return plain;
     });
 
-    (req.log || logger).debug(
-      { page, limit,  returned: items.length },
-      'Products list retrieved'
-    );
-
-    return res.status(HTTPStatus.OK).json({
+    const result = {
       status: 1,
       message: 'Products fetched',
       data: transformedItems,
       meta: { page, limit, total: count },
-    });
+    };
+
+    await CacheService.set(cacheKey, result, CACHE_TTL);
+
+    (req.log || logger).debug(
+      { page, limit, returned: items.length, total: count, cached: false },
+      'Products list retrieved'
+    );
+
+    return res.status(HTTPStatus.OK).json(result);
   } catch (e) {
     console.error(e);
     (req.log || logger).error({ err: e }, 'List products error');

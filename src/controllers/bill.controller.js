@@ -2,6 +2,7 @@ import HTTPStatus from 'http-status';
 import Joi from 'joi';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { Op } from 'sequelize';
 import sequelize from '../config/database.js';
 import Bill, { BillItem } from '../models/bill.model.js';
@@ -13,6 +14,132 @@ import constants from '../config/constants.js';
 import User from '../models/user.model.js';
 
 const { ROLES } = constants;
+const SHARE_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+
+function canManageAnyBill(user) {
+  return user.role === ROLES.ADMIN || user.role === ROLES.MANAGER;
+}
+
+function buildBillAccessWhere(req, id) {
+  const where = { id };
+  if (!canManageAnyBill(req.user)) {
+    where.created_by = req.user.id;
+  }
+  return where;
+}
+
+function normalizeBillPayload(body = {}) {
+  return {
+    customer_id: body.customer_id,
+    items: Array.isArray(body.items) ? body.items : [],
+    discount: Number(body.discount || 0),
+    notes: body.notes,
+    terms_conditions: body.terms_conditions,
+    status: body.status,
+  };
+}
+
+function createShareToken(billId, expiresAt) {
+  const secret = constants.JWT_SECRET || process.env.JWT_SECRET_PROD || 'rayzer-share-secret';
+  const payload = `${billId}:${expiresAt}`;
+  const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return `${expiresAt}.${signature}`;
+}
+
+function verifyShareToken(billId, token) {
+  if (!token || typeof token !== 'string') return false;
+
+  const [expiresAtRaw, signature] = token.split('.');
+  const expiresAt = Number(expiresAtRaw);
+
+  if (!expiresAt || !signature || Date.now() > expiresAt) {
+    return false;
+  }
+
+  const expected = createShareToken(billId, expiresAt).split('.')[1];
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+function buildShareUrl(req, billId) {
+  const expiresAt = Date.now() + SHARE_TOKEN_TTL_MS;
+  const token = createShareToken(billId, expiresAt);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}/api/bills/shared/${billId}/pdf?token=${encodeURIComponent(token)}`;
+}
+
+async function resolveBillItems(itemsPayload, transaction) {
+  const items = [];
+  let subtotal = 0;
+
+  const productIds = itemsPayload.map(item => Number(item.product_id)).filter(Boolean);
+  const products = await Product.findAll({
+    where: { id: { [Op.in]: productIds } },
+    transaction
+  });
+  const productMap = new Map();
+  products.forEach(product => productMap.set(product.id, product));
+
+  const invalidProductIds = [];
+
+  for (const item of itemsPayload) {
+    const product = productMap.get(Number(item.product_id));
+    if (!product) {
+      invalidProductIds.push(item.product_id);
+      continue;
+    }
+
+    const quantity = Number(item.quantity);
+    const totalPrice = product.mrp * quantity;
+    subtotal += totalPrice;
+
+    items.push({
+      product_id: product.id,
+      room_name: item.room_name || 'N/A',
+      quantity,
+      unit_price: product.mrp,
+      dlp_total: (product.dlp || 0) * quantity,
+      total_price: totalPrice,
+    });
+  }
+
+  return {
+    items,
+    subtotal,
+    invalidProductIds,
+    dlp_total: items.reduce((acc, curr) => acc + curr.dlp_total, 0),
+  };
+}
+
+async function fetchBillWithRelations(where) {
+  return Bill.findOne({
+    where,
+    include: [
+      {
+        model: Customer,
+        as: 'customer',
+        attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
+      },
+      {
+        model: BillItem,
+        as: 'items',
+        include: [{
+          model: Product,
+          as: 'product',
+          attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
+        }]
+      },
+      {
+        model: User,
+        as: 'creator',
+        attributes: ['first_name', 'last_name', 'email', 'id', 'mobile_number']
+      }
+    ]
+  });
+}
 
 export const validation = {
   create: {
@@ -35,50 +162,15 @@ export const validation = {
 export async function create(req, res, next) {
   const transaction = await sequelize.transaction();
   try {
-    const customer = await Customer.findByPk(req.body.customer_id, { transaction });
+    const payload = normalizeBillPayload(req.body);
+    const customer = await Customer.findByPk(payload.customer_id, { transaction });
     if (!customer) {
       await transaction.rollback();
       return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
     }
 
     // Fetch products and calculate totals
-    const items = [];
-    let subtotal = 0;
-
-    // Optimize: Fetch all products in one go
-    const productIds = req.body.items.map(i => i.product_id);
-    const products = await Product.findAll({
-      where: {
-        id: { [Op.in]: productIds }
-      },
-      transaction
-    });
-
-    // Create Map for quick lookup
-    const productMap = new Map();
-    products.forEach(p => productMap.set(p.id, p));
-
-    const invalidProductIds = [];
-    for (const item of req.body.items) {
-      // Sequelize ID is integer, ensure type match (req body might be string if not validated strictly)
-      const product = productMap.get(Number(item.product_id));
-      if (!product) {
-        invalidProductIds.push(item.product_id);
-        continue;
-      }
-
-      const totalPrice = product.mrp * item.quantity;
-      subtotal += totalPrice;
-
-      items.push({
-        product_id: product.id,
-        room_name: item.room_name || 'N/A',
-        quantity: item.quantity,
-        unit_price: product.mrp,
-        dlp_total: product.dlp * item.quantity ?? 0,
-        total_price: totalPrice,
-      });
-    }
+    const { items, subtotal, invalidProductIds, dlp_total } = await resolveBillItems(payload.items, transaction);
 
     // Check if any valid items exist
     if (items.length === 0) {
@@ -96,7 +188,7 @@ export async function create(req, res, next) {
     }
 
     const taxRate = 18;
-    const discount = req.body.discount || 0;
+    const discount = payload.discount || 0;
     const totalAmount = subtotal - discount;
     const taxAmount = (totalAmount * taxRate) / 100;
 
@@ -107,10 +199,10 @@ export async function create(req, res, next) {
       tax_amount: taxAmount,
       discount: discount,
       total_amount: totalAmount,
-      notes: req.body.notes,
-      terms_conditions: req.body.terms_conditions,
+      notes: payload.notes,
+      terms_conditions: payload.terms_conditions,
       created_by: req.user.id,
-      dlp_total: items.reduce((acc, curr) => acc + curr.dlp_total, 0),
+      dlp_total,
       items: items // Nested creation
     }, {
       include: [{ model: BillItem, as: 'items' }],
@@ -128,6 +220,82 @@ export async function create(req, res, next) {
   } catch (e) {
     await transaction.rollback();
     (req.log || logger).error({ err: e }, 'Create bill error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}
+
+export async function update(req, res, next) {
+  const transaction = await sequelize.transaction();
+  try {
+    const payload = normalizeBillPayload(req.body);
+    const where = buildBillAccessWhere(req, req.params.id);
+    const bill = await Bill.findOne({ where, include: [{ model: BillItem, as: 'items' }], transaction });
+
+    if (!bill) {
+      await transaction.rollback();
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
+      });
+    }
+
+    const customer = await Customer.findByPk(payload.customer_id, { transaction });
+    if (!customer) {
+      await transaction.rollback();
+      return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
+    }
+
+    const { items, subtotal, invalidProductIds, dlp_total } = await resolveBillItems(payload.items, transaction);
+
+    if (items.length === 0) {
+      await transaction.rollback();
+      return res.status(HTTPStatus.BAD_REQUEST).json({
+        message: 'No valid products found in items',
+        status: 0,
+        invalid_product_ids: invalidProductIds
+      });
+    }
+
+    const taxRate = 18;
+    const discount = payload.discount || 0;
+    const totalAmount = subtotal - discount;
+    const taxAmount = (totalAmount * taxRate) / 100;
+
+    await bill.update({
+      customer_id: customer.id,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      discount,
+      total_amount: totalAmount,
+      notes: payload.notes,
+      terms_conditions: payload.terms_conditions,
+      dlp_total,
+      ...(payload.status ? { status: payload.status } : {}),
+    }, { transaction });
+
+    await BillItem.destroy({ where: { bill_id: bill.id }, transaction });
+    await BillItem.bulkCreate(
+      items.map(item => ({
+        ...item,
+        bill_id: bill.id,
+      })),
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    const updatedBill = await fetchBillWithRelations({ id: bill.id });
+    return res.status(HTTPStatus.OK).json({
+      message: 'Bill updated',
+      status: 1,
+      data: updatedBill,
+      ...(invalidProductIds.length > 0 && { skipped_product_ids: invalidProductIds })
+    });
+  } catch (e) {
+    await transaction.rollback();
+    (req.log || logger).error({ err: e }, 'Update bill error');
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
   }
@@ -247,32 +415,7 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    // Build where clause - Admin/Manager can access any bill
-    const where = { id: req.params.id };
-    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
-    if (!isAdminOrManager) {
-      where.created_by = req.user.id;
-    }
-
-    const bill = await Bill.findOne({
-      where,
-      include: [
-        {
-          model: Customer,
-          as: 'customer',
-          attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
-        },
-        {
-          model: BillItem,
-          as: 'items',
-          include: [{
-            model: Product,
-            as: 'product',
-            attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
-          }]
-        }
-      ]
-    });
+    const bill = await fetchBillWithRelations(buildBillAccessWhere(req, req.params.id));
 
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
@@ -310,36 +453,7 @@ export async function getById(req, res, next) {
 
 export async function generatePDF(req, res, next) {
   try {
-    // Build where clause - Admin/Manager can generate PDF for any bill
-    const where = { id: req.params.id };
-    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
-    if (!isAdminOrManager) {
-      where.created_by = req.user.id;
-    }
-
-    const bill = await Bill.findOne({
-      where,
-      include: [
-        {
-          model: Customer,
-          as: 'customer',
-          attributes: ['name', 'mobile_number', 'company_name', 'location']
-        },
-        {
-          model: BillItem,
-          as: 'items',
-          include: [{
-            model: Product,
-            as: 'product',
-            attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
-          }]
-        },{
-          model: User,
-          as: 'creator',
-          attributes: ['first_name', 'last_name', 'email', 'id', 'mobile_number']
-        }
-      ]
-    });
+    const bill = await fetchBillWithRelations(buildBillAccessWhere(req, req.params.id));
 
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
@@ -388,3 +502,85 @@ export async function generatePDF(req, res, next) {
     return next(e);
   }
 };
+
+export async function getShareLink(req, res, next) {
+  try {
+    const bill = await Bill.findOne({
+      where: buildBillAccessWhere(req, req.params.id),
+      attributes: ['id', 'bill_number']
+    });
+
+    if (!bill) {
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
+      });
+    }
+
+    return res.status(HTTPStatus.OK).json({
+      message: 'Share link generated',
+      status: 1,
+      data: {
+        bill_id: bill.id,
+        bill_number: bill.bill_number,
+        share_url: buildShareUrl(req, bill.id),
+        expires_in_days: 30,
+      }
+    });
+  } catch (e) {
+    (req.log || logger).error({ err: e }, 'Get share link error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}
+
+export async function generateSharedPDF(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { token } = req.query;
+
+    if (!verifyShareToken(id, token)) {
+      return res.status(HTTPStatus.UNAUTHORIZED).json({
+        message: 'Invalid or expired share link',
+        status: 0
+      });
+    }
+
+    const bill = await fetchBillWithRelations({ id });
+    if (!bill) {
+      return res.status(HTTPStatus.NOT_FOUND).json({
+        message: 'Bill not found',
+        status: 0
+      });
+    }
+
+    const billData = bill.toJSON();
+    billData.customer_id = billData.customer;
+    billData.items.forEach(item => {
+      if (item.product) {
+        item.product_id = item.product;
+      }
+    });
+
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'bills');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const filename = `${billData.bill_number}.pdf`;
+    const filepath = path.join(uploadsDir, filename);
+    await generateBillPDF(billData, filepath);
+
+    return res.download(filepath, filename, err => {
+      if (err) {
+        (req.log || logger).error({ err }, 'Shared bill PDF download error');
+        return next(err);
+      }
+      return undefined;
+    });
+  } catch (e) {
+    (req.log || logger).error({ err: e }, 'Generate shared PDF error');
+    e.status = HTTPStatus.BAD_REQUEST;
+    return next(e);
+  }
+}

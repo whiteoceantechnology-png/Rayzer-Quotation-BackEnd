@@ -55,6 +55,7 @@ const router = new Router();
  *         description: Bill created
  */
 router.post('/', authJwt, BillController.create);
+router.put('/:id', authJwt, BillController.update);
 /**
  * @swagger
  * /bills:
@@ -99,6 +100,8 @@ router.post('/', authJwt, BillController.create);
  *         description: List of bills
  */
 router.get('/', authJwt, BillController.list);
+router.get('/shared/:id/pdf', BillController.generateSharedPDF);
+router.get('/:id/share-link', authJwt, BillController.getShareLink);
 /**
  * @swagger
  * /bills/{id}:

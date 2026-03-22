@@ -38,15 +38,15 @@ describe('Product Controller', () => {
       const res = mockRes();
       const next = sinon.stub();
 
-      const mockProducts = {
-        count: 2,
-        rows: [
-          { id: 1, product: 'LED Spotlight' },
-          { id: 2, product: 'Strip Light' },
-        ],
-      };
+      const mockProducts = [
+        { toJSON: () => ({ id: 1, product: 'LED Spotlight' }) },
+        { toJSON: () => ({ id: 2, product: 'Strip Light' }) },
+      ];
 
-      sinon.stub(Product, 'findAndCountAll').resolves(mockProducts);
+      sinon.stub(CacheService, 'get').resolves(null);
+      sinon.stub(CacheService, 'set').resolves();
+      sinon.stub(Product, 'count').resolves(2);
+      sinon.stub(Product, 'findAll').resolves(mockProducts);
 
       await productController.list(req, res, next);
 
@@ -61,16 +61,42 @@ describe('Product Controller', () => {
       const res = mockRes();
       const next = sinon.stub();
 
-      const mockProducts = {
-        count: 1,
-        rows: [{ id: 1, product: 'LED Spotlight' }],
-      };
+      const mockProducts = [
+        { toJSON: () => ({ id: 1, product: 'LED Spotlight' }) },
+      ];
 
-      const findStub = sinon.stub(Product, 'findAndCountAll').resolves(mockProducts);
+      sinon.stub(CacheService, 'get').resolves(null);
+      sinon.stub(CacheService, 'set').resolves();
+      sinon.stub(Product, 'count').resolves(1);
+      const findStub = sinon.stub(Product, 'findAll').resolves(mockProducts);
 
       await productController.list(req, res, next);
 
       expect(findStub.called).to.be.true;
+    });
+
+    it('should return cached list results when available', async () => {
+      const req = mockReq({
+        query: { page: 1, limit: 10, search: 'Strip Driver 12v' },
+      });
+      const res = mockRes();
+      const next = sinon.stub();
+      const cachedPayload = {
+        status: 1,
+        message: 'Products fetched',
+        data: [{ id: 1, product: 'Cached Strip' }],
+        meta: { page: 1, limit: 10, total: 1 },
+      };
+
+      sinon.stub(CacheService, 'get').resolves(cachedPayload);
+      const countStub = sinon.stub(Product, 'count');
+      const findStub = sinon.stub(Product, 'findAll');
+
+      await productController.list(req, res, next);
+
+      expect(countStub.called).to.be.false;
+      expect(findStub.called).to.be.false;
+      expect(res.status.calledWith(200)).to.be.true;
     });
   });
 
