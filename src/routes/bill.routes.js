@@ -55,6 +55,65 @@ const router = new Router();
  *         description: Bill created
  */
 router.post('/', authJwt, BillController.create);
+/**
+ * @swagger
+ * /bills/{id}:
+ *   put:
+ *     summary: Update a bill
+ *     tags: [Bills]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Bill ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - customer_id
+ *               - items
+ *             properties:
+ *               customer_id:
+ *                 type: string
+ *                 description: Customer ID
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [product_id, quantity]
+ *                   properties:
+ *                     product_id:
+ *                       type: string
+ *                     quantity:
+ *                       type: integer
+ *                     room_name:
+ *                       type: string
+ *               discount:
+ *                 type: number
+ *               notes:
+ *                 type: string
+ *               terms_conditions:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [draft, sent, paid, cancelled]
+ *     responses:
+ *       200:
+ *         description: Bill updated
+ *       400:
+ *         description: No valid products found in items
+ *       404:
+ *         description: Bill or customer not found
+ *       401:
+ *         description: Unauthorized
+ */
 router.put('/:id', authJwt, BillController.update);
 /**
  * @swagger
@@ -100,7 +159,85 @@ router.put('/:id', authJwt, BillController.update);
  *         description: List of bills
  */
 router.get('/', authJwt, BillController.list);
+/**
+ * @swagger
+ * /bills/shared/{id}/pdf:
+ *   get:
+ *     summary: Download a shared bill PDF (no auth required)
+ *     description: Generates and downloads a bill PDF using a time-limited share token. The token expires after 30 days.
+ *     tags: [Bills]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Bill ID
+ *       - in: query
+ *         name: token
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Share token obtained from the share-link endpoint
+ *     responses:
+ *       200:
+ *         description: PDF file download
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         description: Invalid or expired share link
+ *       404:
+ *         description: Bill not found
+ */
 router.get('/shared/:id/pdf', BillController.generateSharedPDF);
+/**
+ * @swagger
+ * /bills/{id}/share-link:
+ *   get:
+ *     summary: Generate a shareable link for a bill PDF
+ *     description: Returns a time-limited public URL (valid for 30 days) that can be used to download the bill PDF without authentication.
+ *     tags: [Bills]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Bill ID
+ *     responses:
+ *       200:
+ *         description: Share link generated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 status:
+ *                   type: integer
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     bill_id:
+ *                       type: string
+ *                     bill_number:
+ *                       type: string
+ *                     share_url:
+ *                       type: string
+ *                     expires_in_days:
+ *                       type: integer
+ *                       example: 30
+ *       404:
+ *         description: Bill not found
+ *       401:
+ *         description: Unauthorized
+ */
 router.get('/:id/share-link', authJwt, BillController.getShareLink);
 /**
  * @swagger

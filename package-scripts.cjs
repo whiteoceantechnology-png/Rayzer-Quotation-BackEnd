@@ -2,7 +2,9 @@ require('dotenv').config();
 
 const npsUtils = require('nps-utils');
 
-const { rimraf, crossEnv, series, concurrent } = npsUtils;
+const { series, concurrent } = npsUtils;
+const rimraf = (dir) => `rimraf ${dir}`;
+const crossEnv = (env) => `cross-env ${env}`;
 
 const webpackMode = process.env.NODE_ENV ? process.env.NODE_ENV : 'development';
 

@@ -33,6 +33,10 @@ function normalizeBillPayload(body = {}) {
     customer_id: body.customer_id,
     items: Array.isArray(body.items) ? body.items : [],
     discount: Number(body.discount || 0),
+    discount_type:
+      body.discount_type != null ? Number(body.discount_type) : null,
+    discount_value:
+      body.discount_value != null ? Number(body.discount_value) : null,
     notes: body.notes,
     terms_conditions: body.terms_conditions,
     status: body.status,
@@ -40,9 +44,15 @@ function normalizeBillPayload(body = {}) {
 }
 
 function createShareToken(billId, expiresAt) {
-  const secret = constants.JWT_SECRET || process.env.JWT_SECRET_PROD || 'rayzer-share-secret';
+  const secret =
+    constants.JWT_SECRET ||
+    process.env.JWT_SECRET_PROD ||
+    'rayzer-share-secret';
   const payload = `${billId}:${expiresAt}`;
-  const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
   return `${expiresAt}.${signature}`;
 }
 
@@ -58,7 +68,10 @@ function verifyShareToken(billId, token) {
 
   const expected = createShareToken(billId, expiresAt).split('.')[1];
   try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected),
+    );
   } catch {
     return false;
   }
@@ -68,17 +81,21 @@ function buildShareUrl(req, billId) {
   const expiresAt = Date.now() + SHARE_TOKEN_TTL_MS;
   const token = createShareToken(billId, expiresAt);
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-  return `${baseUrl}/api/bills/shared/${billId}/pdf?token=${encodeURIComponent(token)}`;
+  return `${baseUrl}/api/bills/shared/${billId}/pdf?token=${encodeURIComponent(
+    token,
+  )}`;
 }
 
 async function resolveBillItems(itemsPayload, transaction) {
   const items = [];
   let subtotal = 0;
 
-  const productIds = itemsPayload.map(item => Number(item.product_id)).filter(Boolean);
+  const productIds = itemsPayload
+    .map(item => Number(item.product_id))
+    .filter(Boolean);
   const products = await Product.findAll({
     where: { id: { [Op.in]: productIds } },
-    transaction
+    transaction,
   });
   const productMap = new Map();
   products.forEach(product => productMap.set(product.id, product));
@@ -121,23 +138,40 @@ async function fetchBillWithRelations(where) {
       {
         model: Customer,
         as: 'customer',
-        attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
+        attributes: ['name', 'mobile_number', 'company_name', 'location', 'id'],
       },
       {
         model: BillItem,
         as: 'items',
-        include: [{
-          model: Product,
-          as: 'product',
-          attributes: ['product', 'color', 'chipset', 'ct', 'cri', 'drive', 'power_factor', 'drive_details', 'warranty', 'dlp', 'mrp', 'image']
-        }]
+        include: [
+          {
+            model: Product,
+            as: 'product',
+            attributes: [
+              'product',
+              'color',
+              'chipset',
+              'type',
+              'beam_angle',
+              'ct',
+              'cri',
+              'drive',
+              'power_factor',
+              'drive_details',
+              'warranty',
+              'dlp',
+              'mrp',
+              'image',
+            ],
+          },
+        ],
       },
       {
         model: User,
         as: 'creator',
-        attributes: ['first_name', 'last_name', 'email', 'id', 'mobile_number']
-      }
-    ]
+        attributes: ['first_name', 'last_name', 'email', 'id', 'mobile_number'],
+      },
+    ],
   });
 }
 
@@ -145,16 +179,29 @@ export const validation = {
   create: {
     body: {
       customer_id: Joi.number().required(), // Sequelize IDs are numbers
-      items: Joi.array().min(1).items(
-        Joi.object({
-          product_id: Joi.number().required(),
-          quantity: Joi.number().min(1).required(),
-          room_name: Joi.string().optional().allow('', null)
-        }),
-      ).required(),
-      discount: Joi.number().min(0).optional(),
-      notes: Joi.string().optional().allow('', null),
-      terms_conditions: Joi.string().optional().allow('', null),
+      items: Joi.array()
+        .min(1)
+        .items(
+          Joi.object({
+            product_id: Joi.number().required(),
+            quantity: Joi.number()
+              .min(1)
+              .required(),
+            room_name: Joi.string()
+              .optional()
+              .allow('', null),
+          }),
+        )
+        .required(),
+      discount: Joi.number()
+        .min(0)
+        .optional(),
+      notes: Joi.string()
+        .optional()
+        .allow('', null),
+      terms_conditions: Joi.string()
+        .optional()
+        .allow('', null),
     },
   },
 };
@@ -163,14 +210,23 @@ export async function create(req, res, next) {
   const transaction = await sequelize.transaction();
   try {
     const payload = normalizeBillPayload(req.body);
-    const customer = await Customer.findByPk(payload.customer_id, { transaction });
+    const customer = await Customer.findByPk(payload.customer_id, {
+      transaction,
+    });
     if (!customer) {
       await transaction.rollback();
-      return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
+      return res
+        .status(HTTPStatus.NOT_FOUND)
+        .json({ message: 'Customer not found', status: 0 });
     }
 
     // Fetch products and calculate totals
-    const { items, subtotal, invalidProductIds, dlp_total } = await resolveBillItems(payload.items, transaction);
+    const {
+      items,
+      subtotal,
+      invalidProductIds,
+      dlp_total,
+    } = await resolveBillItems(payload.items, transaction);
 
     // Check if any valid items exist
     if (items.length === 0) {
@@ -178,36 +234,45 @@ export async function create(req, res, next) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         message: 'No valid products found in items',
         status: 0,
-        invalid_product_ids: invalidProductIds
+        invalid_product_ids: invalidProductIds,
       });
     }
 
     // Warn about invalid products but continue
     if (invalidProductIds.length > 0) {
-      (req.log || logger).warn({ invalidProductIds }, 'Some products not found while creating bill');
+      (req.log || logger)
+        .warn(
+          { invalidProductIds },
+          'Some products not found while creating bill',
+        );
     }
 
     const taxRate = 18;
     const discount = payload.discount || 0;
     const totalAmount = subtotal - discount;
-    const taxAmount = (totalAmount * taxRate) / 100;
+    const taxAmount = totalAmount * taxRate / 100;
 
-    const bill = await Bill.create({
-      customer_id: customer.id,
-      subtotal,
-      tax_rate: taxRate,
-      tax_amount: taxAmount,
-      discount: discount,
-      total_amount: totalAmount,
-      notes: payload.notes,
-      terms_conditions: payload.terms_conditions,
-      created_by: req.user.id,
-      dlp_total,
-      items: items // Nested creation
-    }, {
-      include: [{ model: BillItem, as: 'items' }],
-      transaction
-    });
+    const bill = await Bill.create(
+      {
+        customer_id: customer.id,
+        subtotal,
+        tax_rate: taxRate,
+        tax_amount: taxAmount,
+        discount: discount,
+        discount_type: payload.discount_type,
+        discount_value: payload.discount_value,
+        total_amount: totalAmount,
+        notes: payload.notes,
+        terms_conditions: payload.terms_conditions,
+        created_by: req.user.id,
+        dlp_total,
+        items: items, // Nested creation
+      },
+      {
+        include: [{ model: BillItem, as: 'items' }],
+        transaction,
+      },
+    );
 
     await transaction.commit();
 
@@ -215,7 +280,9 @@ export async function create(req, res, next) {
       message: 'Bill created',
       status: 1,
       data: bill,
-      ...(invalidProductIds.length > 0 && { skipped_product_ids: invalidProductIds })
+      ...(invalidProductIds.length > 0 && {
+        skipped_product_ids: invalidProductIds,
+      }),
     });
   } catch (e) {
     await transaction.rollback();
@@ -230,50 +297,68 @@ export async function update(req, res, next) {
   try {
     const payload = normalizeBillPayload(req.body);
     const where = buildBillAccessWhere(req, req.params.id);
-    const bill = await Bill.findOne({ where, include: [{ model: BillItem, as: 'items' }], transaction });
+    const bill = await Bill.findOne({
+      where,
+      include: [{ model: BillItem, as: 'items' }],
+      transaction,
+    });
 
     if (!bill) {
       await transaction.rollback();
       return res.status(HTTPStatus.NOT_FOUND).json({
         message: 'Bill not found',
-        status: 0
+        status: 0,
       });
     }
 
-    const customer = await Customer.findByPk(payload.customer_id, { transaction });
+    const customer = await Customer.findByPk(payload.customer_id, {
+      transaction,
+    });
     if (!customer) {
       await transaction.rollback();
-      return res.status(HTTPStatus.NOT_FOUND).json({ message: 'Customer not found', status: 0 });
+      return res
+        .status(HTTPStatus.NOT_FOUND)
+        .json({ message: 'Customer not found', status: 0 });
     }
 
-    const { items, subtotal, invalidProductIds, dlp_total } = await resolveBillItems(payload.items, transaction);
+    const {
+      items,
+      subtotal,
+      invalidProductIds,
+      dlp_total,
+    } = await resolveBillItems(payload.items, transaction);
 
     if (items.length === 0) {
       await transaction.rollback();
       return res.status(HTTPStatus.BAD_REQUEST).json({
         message: 'No valid products found in items',
         status: 0,
-        invalid_product_ids: invalidProductIds
+        invalid_product_ids: invalidProductIds,
       });
     }
 
     const taxRate = 18;
     const discount = payload.discount || 0;
     const totalAmount = subtotal - discount;
-    const taxAmount = (totalAmount * taxRate) / 100;
+    const taxAmount = totalAmount * taxRate / 100;
 
-    await bill.update({
-      customer_id: customer.id,
-      subtotal,
-      tax_rate: taxRate,
-      tax_amount: taxAmount,
-      discount,
-      total_amount: totalAmount,
-      notes: payload.notes,
-      terms_conditions: payload.terms_conditions,
-      dlp_total,
-      ...(payload.status ? { status: payload.status } : {}),
-    }, { transaction });
+    await bill.update(
+      {
+        customer_id: customer.id,
+        subtotal,
+        tax_rate: taxRate,
+        tax_amount: taxAmount,
+        discount,
+        discount_type: payload.discount_type,
+        discount_value: payload.discount_value,
+        total_amount: totalAmount,
+        notes: payload.notes,
+        terms_conditions: payload.terms_conditions,
+        dlp_total,
+        ...(payload.status ? { status: payload.status } : {}),
+      },
+      { transaction },
+    );
 
     await BillItem.destroy({ where: { bill_id: bill.id }, transaction });
     await BillItem.bulkCreate(
@@ -281,7 +366,7 @@ export async function update(req, res, next) {
         ...item,
         bill_id: bill.id,
       })),
-      { transaction }
+      { transaction },
     );
 
     await transaction.commit();
@@ -291,7 +376,9 @@ export async function update(req, res, next) {
       message: 'Bill updated',
       status: 1,
       data: updatedBill,
-      ...(invalidProductIds.length > 0 && { skipped_product_ids: invalidProductIds })
+      ...(invalidProductIds.length > 0 && {
+        skipped_product_ids: invalidProductIds,
+      }),
     });
   } catch (e) {
     await transaction.rollback();
@@ -308,13 +395,14 @@ export async function list(req, res, next) {
     const offset = (page - 1) * limit;
 
     const where = {};
-    
+
     // Admin and Manager can see all bills, others see only their own
-    const isAdminOrManager = req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
+    const isAdminOrManager =
+      req.user.role === ROLES.ADMIN || req.user.role === ROLES.MANAGER;
     if (!isAdminOrManager) {
       where.created_by = req.user.id;
     }
-    
+
     if (req.query.status) where.status = req.query.status;
     if (req.query.customer_id) where.customer_id = req.query.customer_id;
     // Allow Admin/Manager to filter by creator
@@ -334,11 +422,11 @@ export async function list(req, res, next) {
 
       where.created_at = {
         [Op.gte]: startOfDay,
-        [Op.lt]: startOfNextDay
+        [Op.lt]: startOfNextDay,
       };
     }
 
-    if(req.query.start_date && req.query.end_date) {
+    if (req.query.start_date && req.query.end_date) {
       const startDate = new Date(req.query.start_date);
       startDate.setHours(0, 0, 0, 0);
       const endDate = new Date(req.query.end_date);
@@ -346,7 +434,7 @@ export async function list(req, res, next) {
 
       where.created_at = {
         [Op.gte]: startDate,
-        [Op.lt]: endDate
+        [Op.lt]: endDate,
         // [Op.between]: [startDate, endDate]
       };
     }
@@ -360,19 +448,27 @@ export async function list(req, res, next) {
         {
           model: Customer,
           as: 'customer',
-          attributes: ['name', 'mobile_number', 'company_name', 'location', 'id']
+          attributes: [
+            'name',
+            'mobile_number',
+            'company_name',
+            'location',
+            'id',
+          ],
         },
         {
           model: BillItem,
           as: 'items',
-          include: [{
-            model: Product,
-            as: 'product',
-            attributes: ['product', 'color', 'chipset']
-          }]
-        }
+          include: [
+            {
+              model: Product,
+              as: 'product',
+              attributes: ['product', 'color', 'chipset'],
+            },
+          ],
+        },
       ],
-      distinct: true // Important for correct count with includes
+      distinct: true, // Important for correct count with includes
     });
 
     const transformedBills = bills.map(bill => {
@@ -404,7 +500,7 @@ export async function list(req, res, next) {
       message: 'Bills fetched',
       status: 1,
       data: transformedBills,
-      meta: { page, limit, total: count }
+      meta: { page, limit, total: count },
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'List bills error');
@@ -415,12 +511,14 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    const bill = await fetchBillWithRelations(buildBillAccessWhere(req, req.params.id));
+    const bill = await fetchBillWithRelations(
+      buildBillAccessWhere(req, req.params.id),
+    );
 
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
         message: 'Bill not found',
-        status: 0
+        status: 0,
       });
     }
 
@@ -432,7 +530,12 @@ export async function getById(req, res, next) {
       data.items = data.items.map(item => {
         if (item.product) {
           item.product_details = item.product;
-          item.display_details = `${item.product.color} - ${item.product.chipset} - ${item.product.ct} - ${item.product.cri} - ${item.product.drive} - ${item.product.power_factor} - ${item.product.drive_details} - ${item.product.warranty} - DLP: ${item.product.dlp} - MRP: ${item.product.mrp}`;
+          item.display_details = `${item.product.color} - ${item.product
+            .chipset} - ${item.product.type} - ${item.product
+            .beam_angle} - ${item.product.ct} - ${item.product.cri} - ${item
+            .product.drive} - ${item.product.power_factor} - ${item.product
+            .drive_details} - ${item.product.warranty} - DLP: ${item.product
+            .dlp} - MRP: ${item.product.mrp}`;
           delete item.product;
         }
         return item;
@@ -442,7 +545,7 @@ export async function getById(req, res, next) {
     return res.status(HTTPStatus.OK).json({
       message: 'Bill fetched',
       status: 1,
-      data
+      data,
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get bill error');
@@ -453,12 +556,14 @@ export async function getById(req, res, next) {
 
 export async function generatePDF(req, res, next) {
   try {
-    const bill = await fetchBillWithRelations(buildBillAccessWhere(req, req.params.id));
+    const bill = await fetchBillWithRelations(
+      buildBillAccessWhere(req, req.params.id),
+    );
 
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
         message: 'Bill not found',
-        status: 0
+        status: 0,
       });
     }
 
@@ -486,7 +591,7 @@ export async function generatePDF(req, res, next) {
 
     const filename = `${billData.bill_number}.pdf`;
     const filepath = path.join(uploadsDir, filename);
-    console.log(billData)
+    console.log(billData);
     await generateBillPDF(billData, filepath);
 
     return res.download(filepath, filename, err => {
@@ -501,19 +606,19 @@ export async function generatePDF(req, res, next) {
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
   }
-};
+}
 
 export async function getShareLink(req, res, next) {
   try {
     const bill = await Bill.findOne({
       where: buildBillAccessWhere(req, req.params.id),
-      attributes: ['id', 'bill_number']
+      attributes: ['id', 'bill_number'],
     });
 
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
         message: 'Bill not found',
-        status: 0
+        status: 0,
       });
     }
 
@@ -525,7 +630,7 @@ export async function getShareLink(req, res, next) {
         bill_number: bill.bill_number,
         share_url: buildShareUrl(req, bill.id),
         expires_in_days: 30,
-      }
+      },
     });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Get share link error');
@@ -542,7 +647,7 @@ export async function generateSharedPDF(req, res, next) {
     if (!verifyShareToken(id, token)) {
       return res.status(HTTPStatus.UNAUTHORIZED).json({
         message: 'Invalid or expired share link',
-        status: 0
+        status: 0,
       });
     }
 
@@ -550,7 +655,7 @@ export async function generateSharedPDF(req, res, next) {
     if (!bill) {
       return res.status(HTTPStatus.NOT_FOUND).json({
         message: 'Bill not found',
-        status: 0
+        status: 0,
       });
     }
 
