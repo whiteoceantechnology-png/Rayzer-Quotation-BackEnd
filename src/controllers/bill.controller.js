@@ -37,6 +37,7 @@ function normalizeBillPayload(body = {}) {
       body.discount_type != null ? Number(body.discount_type) : null,
     discount_value:
       body.discount_value != null ? Number(body.discount_value) : null,
+    tax_rate: body.tax_rate != null ? Number(body.tax_rate) : 18,
     notes: body.notes,
     terms_conditions: body.terms_conditions,
     status: body.status,
@@ -247,10 +248,11 @@ export async function create(req, res, next) {
         );
     }
 
-    const taxRate = 18;
+    const taxRate = payload.tax_rate;
     const discount = payload.discount || 0;
-    const totalAmount = subtotal - discount;
-    const taxAmount = totalAmount * taxRate / 100;
+    const amountAfterDiscount = subtotal - discount;
+    const taxAmount = amountAfterDiscount * taxRate / 100;
+    const totalAmount = amountAfterDiscount + taxAmount;
 
     const bill = await Bill.create(
       {
@@ -337,10 +339,11 @@ export async function update(req, res, next) {
       });
     }
 
-    const taxRate = 18;
+    const taxRate = payload.tax_rate;
     const discount = payload.discount || 0;
-    const totalAmount = subtotal - discount;
-    const taxAmount = totalAmount * taxRate / 100;
+    const amountAfterDiscount = subtotal - discount;
+    const taxAmount = amountAfterDiscount * taxRate / 100;
+    const totalAmount = amountAfterDiscount + taxAmount;
 
     await bill.update(
       {
