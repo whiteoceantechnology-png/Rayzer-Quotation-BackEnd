@@ -81,87 +81,94 @@ class User extends Model {
 //     { fields: ['role'] },
 //   ]
 // });
-User.init({
-  email: {
-    type: Sequelize.STRING,
-    allowNull: false,
-    unique: {
-      msg: 'Email already exists'
-    },
-    validate: {
-      notEmpty: { msg: 'Email is required!' },
-      isEmail: { msg: 'Email is not valid!' }
-    },
-    field: 'email'
-  },
-  mobile_number: {
-    type: Sequelize.STRING,
-    set(value) {
-      this.setDataValue('mobile_number', value ? value.trim() : value);
-    },
-    field: 'mobile_number'
-  },
-  first_name: {
-    type: Sequelize.STRING,
-    field: 'first_name'
-  },
-  last_name: {
-    type: Sequelize.STRING,
-    field: 'last_name'
-  },
-  username: {
-    type: Sequelize.STRING,
-    unique: {
-      msg: 'Username already exists'
-    },
-    field: 'username'
-  },
-  password: {
-    type: Sequelize.STRING,
-    allowNull: false,
-    validate: {
-      notEmpty: { msg: 'Password is required!' },
-      len: {
-        args: [6, 100],
-        msg: 'Password must be at least 6 characters!'
+User.init(
+  {
+    email: {
+      type: Sequelize.STRING,
+      allowNull: false,
+      unique: {
+        msg: 'Email already exists',
       },
-      is: {
-        args: /\d/,
-        msg: 'Password must contain a number!'
-      }
+      validate: {
+        notEmpty: { msg: 'Email is required!' },
+        isEmail: { msg: 'Email is not valid!' },
+      },
+      field: 'email',
     },
-    field: 'password'
-  },
-  role: {
-    type: Sequelize.ENUM,
-    values: Object.values(ROLES),
-    defaultValue: ROLES.SALES_PERSON,
-    field: 'role'
-  }
-}, {
-  sequelize,
-  modelName: 'User',
-  tableName: 'users',
-  underscored: true,
-  timestamps: true,
-  hooks: {
-    beforeCreate: (user) => {
-      if (user.password) {
-        user.password = User._hashPassword(user.password);
-      }
+    mobile_number: {
+      type: Sequelize.STRING,
+      set(value) {
+        this.setDataValue('mobile_number', value ? value.trim() : value);
+      },
+      field: 'mobile_number',
     },
-    beforeUpdate: (user) => {
-      if (user.changed('password')) {
-        user.password = User._hashPassword(user.password);
-      }
-    }
+    first_name: {
+      type: Sequelize.STRING,
+      field: 'first_name',
+    },
+    last_name: {
+      type: Sequelize.STRING,
+      field: 'last_name',
+    },
+    username: {
+      type: Sequelize.STRING,
+      unique: {
+        msg: 'Username already exists',
+      },
+      field: 'username',
+    },
+    password: {
+      type: Sequelize.STRING,
+      allowNull: false,
+      validate: {
+        notEmpty: { msg: 'Password is required!' },
+        len: {
+          args: [6, 100],
+          msg: 'Password must be at least 6 characters!',
+        },
+        is: {
+          args: /\d/,
+          msg: 'Password must contain a number!',
+        },
+      },
+      field: 'password',
+    },
+    role: {
+      type: Sequelize.ENUM,
+      values: Object.values(ROLES),
+      defaultValue: ROLES.SALES_PERSON,
+      field: 'role',
+    },
+    dlp_percent: {
+      type: Sequelize.ENUM('dlp', 'dlp_5', 'dlp_15', 'dlp_20'),
+      field: 'dlp_percent',
+    },
   },
-  indexes: [
-    { fields: ['email'], unique: true },
-    { fields: ['username'], unique: true },
-    { fields: ['role'] }
-  ]
-});
+  {
+    sequelize,
+    modelName: 'User',
+    tableName: 'users',
+    underscored: true,
+    timestamps: true,
+    hooks: {
+      beforeCreate: user => {
+        if (user.password) {
+          user.password = User._hashPassword(user.password);
+        }
+      },
+      beforeUpdate: user => {
+        if (user.changed('password')) {
+          user.password = User._hashPassword(user.password);
+        }
+      },
+    },
+    indexes: [
+      { fields: ['email'], unique: true },
+      { fields: ['username'], unique: true },
+      { fields: ['role'] },
+    ],
+  },
+);
 
 // Sync model with database (optional, better to migrate properly in real prod, but for this task/dev ok)
 // We might want to call sync somewhere centrally, but for now strict portability:

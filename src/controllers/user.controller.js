@@ -34,7 +34,13 @@ export const validation = {
 export async function create(req, res, next) {
   try {
     const user = await User.create(req.body);
-    return res.status(HTTPStatus.CREATED).json({ message: 'User created successfully', status: 1, data: user.toAuthJSON() });
+    return res
+      .status(HTTPStatus.CREATED)
+      .json({
+        message: 'User created successfully',
+        status: 1,
+        data: user.toAuthJSON(),
+      });
   } catch (e) {
     e.status = HTTPStatus.BAD_REQUEST;
     return next(e);
@@ -44,8 +50,13 @@ export async function create(req, res, next) {
 export async function resetPassword(req, res, next) {
   try {
     const hashedPassword = await hash(req.body.password, 10);
-    await User.update({ password: hashedPassword }, { where: { id: req.user.id } });
-    return res.status(HTTPStatus.OK).json({ message: 'Password reset successful', status: 1 });
+    await User.update(
+      { password: hashedPassword },
+      { where: { id: req.user.id } },
+    );
+    return res
+      .status(HTTPStatus.OK)
+      .json({ message: 'Password reset successful', status: 1 });
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Reset password error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -64,16 +75,15 @@ export async function updateProfile(req, res, next) {
 
     // Fetch updated
     const userProfile = await User.findByPk(req.user.id, {
-      attributes: { exclude: ['password'] }
+      attributes: { exclude: ['password'] },
     });
 
     const respObj = {
       message: 'updateProfile successful',
       status: 1,
       data: userProfile,
-    }
+    };
     return res.status(HTTPStatus.OK).json(respObj);
-
   } catch (error) {
     (req.log || logger).error({ err: error }, 'Update profile error');
     return next(error);
@@ -82,22 +92,27 @@ export async function updateProfile(req, res, next) {
 
 export async function createSalesPerson(req, res, next) {
   try {
-    const { email, password, username, first_name, last_name, mobile_number } = req.body;
+    const {
+      email,
+      password,
+      username,
+      first_name,
+      last_name,
+      mobile_number,
+      dlp_percent,
+    } = req.body;
 
-    const { Op } = (await import('sequelize'));
+    const { Op } = await import('sequelize');
     const existingUser = await User.findOne({
       where: {
-        [Op.or]: [
-          { email },
-          { username }
-        ]
-      }
+        [Op.or]: [{ email }, { username }],
+      },
     });
     console.log(existingUser);
     if (existingUser) {
       return res.status(HTTPStatus.BAD_REQUEST).json({
         status: 0,
-        message: 'User with this email or username already exists'
+        message: 'User with this email or username already exists',
       });
     }
 
@@ -108,14 +123,18 @@ export async function createSalesPerson(req, res, next) {
       first_name,
       last_name,
       mobile_number,
+      dlp_percent,
       role: ROLES.SALES_PERSON,
     });
 
     // Invalidate all sales persons list cache
     if (CacheService.client) {
-      const keys = CacheService.client.keys().filter(k => k.startsWith('salesPersons:list:'));
+      const keys = CacheService.client
+        .keys()
+        .filter(k => k.startsWith('salesPersons:list:'));
       keys.forEach(k => CacheService.client.del(k));
-      (req.log || logger).info({ keys }, 'Cache invalidated for sales persons list');
+      (req.log || logger)
+        .info({ keys }, 'Cache invalidated for sales persons list');
     }
 
     return res.status(HTTPStatus.CREATED).json({
@@ -134,7 +153,10 @@ export async function createSalesPerson(req, res, next) {
 export async function listSalesPersons(req, res, next) {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit || '20', 10), 1),
+      100,
+    );
     const skip = (page - 1) * limit;
 
     const query = { role: ROLES.SALES_PERSON };
@@ -145,24 +167,29 @@ export async function listSalesPersons(req, res, next) {
         { first_name: searchRegex },
         { last_name: searchRegex },
         { email: searchRegex },
-        { username: searchRegex }
+        { username: searchRegex },
       ];
     }
 
     // Generate cache key based on query params
-    const cacheKey = `salesPersons:list:${page}:${limit}:${req.query.search || ''}`;
+    const cacheKey = `salesPersons:list:${page}:${limit}:${req.query.search ||
+      ''}`;
     const cachedData = await CacheService.get(cacheKey);
     if (cachedData) {
-      (req.log || logger).info({ cacheKey }, 'Cache hit for sales persons list');
-      return res.status(HTTPStatus.OK).json({ ...cachedData, message: 'Sales persons fetched (cached)' });
+      (req.log || logger)
+        .info({ cacheKey }, 'Cache hit for sales persons list');
+      return res
+        .status(HTTPStatus.OK)
+        .json({ ...cachedData, message: 'Sales persons fetched (cached)' });
     } else {
-      (req.log || logger).debug({ cacheKey }, 'Cache miss for sales persons list');
+      (req.log || logger)
+        .debug({ cacheKey }, 'Cache miss for sales persons list');
     }
 
     // Build Sequelize where clause
     const where = { role: ROLES.SALES_PERSON };
     if (req.query.search) {
-      const { Op } = (await import('sequelize'));
+      const { Op } = await import('sequelize');
       where[Op.or] = [
         { first_name: { [Op.iLike]: `%${req.query.search}%` } },
         { last_name: { [Op.iLike]: `%${req.query.search}%` } },
@@ -201,7 +228,10 @@ export async function listSalesPersons(req, res, next) {
 export async function getSalesPerson(req, res, next) {
   try {
     const { id } = req.params;
-    const salesPerson = await User.findOne({ _id: id, role: ROLES.SALES_PERSON }).select('-password');
+    const salesPerson = await User.findOne({
+      where: { id, role: ROLES.SALES_PERSON },
+      attributes: { exclude: ['password'] },
+    });
 
     if (!salesPerson) {
       return res.status(HTTPStatus.NOT_FOUND).json({
@@ -231,12 +261,11 @@ export async function updateSalesPerson(req, res, next) {
     delete updates.password;
     delete updates.role;
     delete updates.email; // Usually email updates require verification, keeping simple for now or strictly disallow
+    // dlp_percent is allowed
 
-    const salesPerson = await User.findOneAndUpdate(
-      { _id: id, role: ROLES.SALES_PERSON },
-      updates,
-      { new: true }
-    ).select('-password');
+    const salesPerson = await User.findOne({
+      where: { id, role: ROLES.SALES_PERSON },
+    });
 
     if (!salesPerson) {
       return res.status(HTTPStatus.NOT_FOUND).json({
@@ -245,12 +274,21 @@ export async function updateSalesPerson(req, res, next) {
       });
     }
 
+    await salesPerson.update(updates);
+
+    // Invalidate sales persons list cache
+    if (CacheService.client) {
+      const keys = CacheService.client
+        .keys()
+        .filter(k => k.startsWith('salesPersons:list:'));
+      keys.forEach(k => CacheService.client.del(k));
+    }
+
     return res.status(HTTPStatus.OK).json({
       status: 1,
       message: 'Sales person updated successfully',
-      data: salesPerson
+      data: salesPerson.toJSON(),
     });
-
   } catch (e) {
     (req.log || logger).error({ err: e }, 'Update sales person error');
     e.status = HTTPStatus.BAD_REQUEST;
@@ -262,13 +300,23 @@ export async function deleteSalesPerson(req, res, next) {
   try {
     const { id } = req.params;
 
-    const result = await User.destroy({ where: { id, role: ROLES.SALES_PERSON } });
+    const result = await User.destroy({
+      where: { id, role: ROLES.SALES_PERSON },
+    });
 
     if (!result) {
       return res.status(HTTPStatus.NOT_FOUND).json({
         status: 0,
         message: 'Sales person not found',
       });
+    }
+
+    // Invalidate sales persons list cache
+    if (CacheService.client) {
+      const keys = CacheService.client
+        .keys()
+        .filter(k => k.startsWith('salesPersons:list:'));
+      keys.forEach(k => CacheService.client.del(k));
     }
 
     return res.status(HTTPStatus.OK).json({

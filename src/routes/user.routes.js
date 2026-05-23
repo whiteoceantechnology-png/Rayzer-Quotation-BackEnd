@@ -184,9 +184,6 @@ routes.patch(
   UserController.updateProfile,
 );
 
-
-
-
 /**
  * @swagger
  * tags:
@@ -225,6 +222,9 @@ routes.patch(
  *                 type: string
  *               mobile_number:
  *                 type: string
+ *               dlp_percent:
+ *                 type: string
+ *                 enum: [dlp, dlp_5, dlp_15, dlp_20]
  *     responses:
  *       201:
  *         description: Sales person created successfully
@@ -236,7 +236,7 @@ routes.post(
   '/sales-persons',
   authJwt,
   checkRole([ROLES.ADMIN]),
-  UserController.createSalesPerson
+  UserController.createSalesPerson,
 );
 
 /**
@@ -277,7 +277,7 @@ routes.get(
   '/sales-persons',
   authJwt,
   checkRole([ROLES.ADMIN]),
-  UserController.listSalesPersons
+  UserController.listSalesPersons,
 );
 
 /**
@@ -305,7 +305,7 @@ routes.get(
   '/sales-persons/:id',
   authJwt,
   checkRole([ROLES.ADMIN]),
-  UserController.getSalesPerson
+  UserController.getSalesPerson,
 );
 
 /**
@@ -336,6 +336,9 @@ routes.get(
  *                 type: string
  *               mobile_number:
  *                 type: string
+ *               dlp_percent:
+ *                 type: string
+ *                 enum: [dlp, dlp_5, dlp_15, dlp_20]
  *     responses:
  *       200:
  *         description: User updated successfully
@@ -346,7 +349,7 @@ routes.patch(
   '/sales-persons/:id',
   authJwt,
   checkRole([ROLES.ADMIN]),
-  UserController.updateSalesPerson
+  UserController.updateSalesPerson,
 );
 
 /**
@@ -374,7 +377,7 @@ routes.delete(
   '/sales-persons/:id',
   authJwt,
   checkRole([ROLES.ADMIN]),
-  UserController.deleteSalesPerson
+  UserController.deleteSalesPerson,
 );
 
 export default routes;
