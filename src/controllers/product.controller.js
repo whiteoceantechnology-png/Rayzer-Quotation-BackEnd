@@ -769,12 +769,10 @@ export async function getColorTemperatures(req, res, next) {
     const cacheKey = generateCacheKey('products:selection:ct', req.query);
     const cachedData = await CacheService.get(cacheKey);
     if (cachedData) {
-      return res
-        .status(HTTPStatus.OK)
-        .json({
-          ...cachedData,
-          message: 'Color temperatures fetched (cached)',
-        });
+      return res.status(HTTPStatus.OK).json({
+        ...cachedData,
+        message: 'Color temperatures fetched (cached)',
+      });
     }
 
     // Sort numerically
@@ -1004,6 +1002,16 @@ export async function getFinalProduct(req, res, next) {
       finalProduct.drive,
     ].filter(Boolean);
 
+    // Determine which DLP field to use based on user.dlp_percent
+    let dlpField = 'dlp';
+    if (req.user && req.user.dlp_percent) {
+      dlpField = req.user.dlp_percent;
+    }
+    const dlpPrice =
+      finalProduct[dlpField] !== undefined && finalProduct[dlpField] !== null
+        ? Number(finalProduct[dlpField])
+        : 0;
+
     const transformedProduct = {
       id: finalProduct.id.toString(), // Sequelize id is integer, convert if needed
       product: finalProduct.product,
@@ -1017,10 +1025,11 @@ export async function getFinalProduct(req, res, next) {
       power_factor: finalProduct.power_factor,
       drive_details: finalProduct.drive_details,
       warranty: finalProduct.warranty,
-      dlp: finalProduct.dlp,
+      dlp: dlpPrice, // Always return the correct DLP price as 'dlp'
       mrp: finalProduct.mrp,
       image: finalProduct.image,
       displayName: displayParts.join(' - '),
+      dlp_price_used: dlpField, // Optional: for debugging/response
     };
 
     const result = {

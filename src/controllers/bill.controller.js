@@ -87,7 +87,7 @@ function buildShareUrl(req, billId) {
   )}`;
 }
 
-async function resolveBillItems(itemsPayload, transaction) {
+async function resolveBillItems(itemsPayload, transaction, user) {
   const items = [];
   let subtotal = 0;
 
@@ -103,6 +103,9 @@ async function resolveBillItems(itemsPayload, transaction) {
 
   const invalidProductIds = [];
 
+  // Determine which DLP field to use based on user.dlp_percent
+  const dlpField = user && user.dlp_percent ? user.dlp_percent : 'dlp';
+
   for (const item of itemsPayload) {
     const product = productMap.get(Number(item.product_id));
     if (!product) {
@@ -114,13 +117,21 @@ async function resolveBillItems(itemsPayload, transaction) {
     const totalPrice = product.mrp * quantity;
     subtotal += totalPrice;
 
+    // Dynamically get the DLP price field
+    const dlpPrice =
+      product[dlpField] !== undefined && product[dlpField] !== null
+        ? Number(product[dlpField])
+        : 0;
+
     items.push({
       product_id: product.id,
       room_name: item.room_name || 'N/A',
       quantity,
       unit_price: product.mrp,
-      dlp_total: (product.dlp || 0) * quantity,
+      dlp: dlpPrice, // Always return the correct DLP price as 'dlp'
+      dlp_total: dlpPrice * quantity,
       total_price: totalPrice,
+      dlp_price_used: dlpField, // Optional: for debugging/response
     });
   }
 
@@ -161,6 +172,9 @@ async function fetchBillWithRelations(where) {
               'drive_details',
               'warranty',
               'dlp',
+              'dlp_5',
+              'dlp_15',
+              'dlp_20',
               'mrp',
               'image',
             ],
@@ -227,7 +241,7 @@ export async function create(req, res, next) {
       subtotal,
       invalidProductIds,
       dlp_total,
-    } = await resolveBillItems(payload.items, transaction);
+    } = await resolveBillItems(payload.items, transaction, req.user);
 
     // Check if any valid items exist
     if (items.length === 0) {
@@ -328,7 +342,7 @@ export async function update(req, res, next) {
       subtotal,
       invalidProductIds,
       dlp_total,
-    } = await resolveBillItems(payload.items, transaction);
+    } = await resolveBillItems(payload.items, transaction, req.user);
 
     if (items.length === 0) {
       await transaction.rollback();
@@ -530,15 +544,24 @@ export async function getById(req, res, next) {
     delete data.customer;
 
     if (data.items) {
+      // Use the bill creator's dlp_percent if available, else fallback to req.user
+      const dlpField =
+        data.creator && data.creator.dlp_percent
+          ? data.creator.dlp_percent
+          : req.user && req.user.dlp_percent ? req.user.dlp_percent : 'dlp';
       data.items = data.items.map(item => {
         if (item.product) {
-          item.product_details = item.product;
-          item.display_details = `${item.product.color} - ${item.product
-            .chipset} - ${item.product.type} - ${item.product
-            .beam_angle} - ${item.product.ct} - ${item.product.cri} - ${item
-            .product.drive} - ${item.product.power_factor} - ${item.product
-            .drive_details} - ${item.product.warranty} - DLP: ${item.product
-            .dlp} - MRP: ${item.product.mrp}`;
+          // Clone product details to avoid mutating the original
+          const productDetails = { ...item.product };
+          // Set the correct DLP value
+          productDetails.dlp =
+            item.product[dlpField] !== undefined &&
+            item.product[dlpField] !== null
+              ? Number(item.product[dlpField])
+              : 0;
+          item.product_details = productDetails;
+          // Update display_details to use the correct DLP value
+          item.display_details = `${productDetails.color} - ${productDetails.chipset} - ${productDetails.type} - ${productDetails.beam_angle} - ${productDetails.ct} - ${productDetails.cri} - ${productDetails.drive} - ${productDetails.power_factor} - ${productDetails.drive_details} - ${productDetails.warranty} - DLP: ${productDetails.dlp} - MRP: ${productDetails.mrp}`;
           delete item.product;
         }
         return item;
